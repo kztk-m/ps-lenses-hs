@@ -1,11 +1,16 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 {-# HLINT ignore "Use tuple-section" #-}
 
-module MALens where
+module MALens2 where
 
 import Control.Applicative (liftA2)
 import Control.Category
@@ -16,11 +21,27 @@ import qualified Data.Map as M
 import Debug.Trace (trace)
 import GHC.Stack (HasCallStack, callStack, getCallStack)
 
+import Control.Monad.Reader
+
 import Domain
 import Err
 
-data MALens a b = MALens {get :: a -> b, put :: a -> b -> Err a}
 data Galois a b = Galois {leftAdjoint :: a -> Err b, rightAdjoint :: b -> Err a}
+
+data MALens a b = MALens {get :: a -> b, putM :: b -> ReaderT (Maybe a) Err a}
+
+getOrig :: ReaderT (Maybe a) Err a
+getOrig = do
+  m <- ask
+  case m of
+    Just a -> pure a
+    Nothing -> lift $ err "the original source is unavailable here"
+
+put :: MALens a b -> a -> b -> Err a
+put l a b = runReaderT (putM l b) (Just a)
+
+unget :: MALens a b -> b -> Err a
+unget l b = runReaderT (putM l b) Nothing
 
 -- When Galois a b is a pair of isomorphism (invertible homomorphisms), then it can be
 -- inverted
@@ -28,23 +49,49 @@ invert :: Galois a b -> Galois b a
 invert (Galois f g) = Galois g f
 
 idL :: MALens a a
-idL = MALens id (\_ b -> pure b)
+idL = MALens id pure
 
 instance Category MALens where
   id = idL
 
+  (.) :: forall a b c. MALens b c -> MALens a b -> MALens a c
   l2 . l1 = MALens (get l2 . get l1) p
     where
-      p a c = do
-        let b = get l1 a
-        b' <- put l2 b c
-        put l1 a b'
+      p :: c -> ReaderT (Maybe a) Err a
+      p c = do
+        b' <- withReaderT (fmap (get l1)) $ putM l2 c
+        putM l1 b'
+
+liftMissing :: forall a b. (HasCallStack) => MALens a b -> MALens (M a) (M b)
+liftMissing l = MALens g p
+  where
+    g (NoneWith s) = NoneWith s
+    g (Some a) = Some $ get l a
+
+    ext :: Maybe (M a) -> Maybe a
+    ext x =
+      x >>= \case
+        Some a -> pure a
+        _ -> Nothing
+
+    p :: M b -> ReaderT (Maybe (M a)) Err (M a)
+    p None = pure None
+    p (Some b) =
+      fmap Some
+        $ withReaderT ext
+        $ putM l b
+
+-- >>> put (liftMissing id) None (Some 1)
+-- Ok (Some 1)
 
 (***) :: MALens a c -> MALens b d -> MALens (a, b) (c, d)
 l1 *** l2 = MALens g p
   where
     g (a, b) = (get l1 a, get l2 b)
-    p (a, b) (c, d) = liftA2 (,) (put l1 a c) (put l2 b d)
+    p (c, d) =
+      let r1 = withReaderT (fmap fst) $ putM l1 c
+          r2 = withReaderT (fmap snd) $ putM l2 d
+      in  liftA2 (,) r1 r2
 
 first :: MALens a c -> MALens (a, d) (c, d)
 first l = l *** id
@@ -52,7 +99,7 @@ second :: MALens b d -> MALens (c, b) (c, d)
 second l = id *** l
 
 swapL :: MALens (a, b) (b, a)
-swapL = MALens sw (const $ pure . sw)
+swapL = MALens sw (pure . sw)
   where
     sw (x, y) = (y, x)
 
@@ -60,48 +107,48 @@ assocToRightL :: MALens ((a, b), c) (a, (b, c))
 assocToRightL = MALens f g
   where
     f ((a, b), c) = (a, (b, c))
-    g _ (a, (b, c)) = pure ((a, b), c)
+    g (a, (b, c)) = pure ((a, b), c)
 
 assocToLeftL :: MALens (a, (b, c)) ((a, b), c)
 assocToLeftL = MALens f g
   where
     f (a, (b, c)) = ((a, b), c)
-    g _ ((a, b), c) = pure (a, (b, c))
+    g ((a, b), c) = pure (a, (b, c))
 
 fstL :: (LowerBounded b) => MALens (a, b) a
-fstL = MALens fst (\_ a -> pure (a, least))
+fstL = MALens fst (\a -> pure (a, least))
 
 sndL :: (LowerBounded a) => MALens (a, b) b
-sndL = MALens snd (\_ a -> pure (least, a))
+sndL = MALens snd (\a -> pure (least, a))
 
 dup :: (Lub a) => MALens a (a, a)
-dup = MALens (\a -> (a, a)) (\_ (a1, a2) -> lub a1 a2)
+dup = MALens (\a -> (a, a)) (\(a1, a2) -> lift $ lub a1 a2)
 
 liftGalois :: Galois b a -> MALens (M a) (M b)
 liftGalois galois = MALens g p
   where
-    g None = None
+    g (NoneWith s) = NoneWith s
     g (Some y) =
       case rightAdjoint galois y of
         Ok x -> Some x
-        Err _ -> None
+        Err s -> NoneWith s
 
-    p _ None = pure None
-    p _ (Some x) = Some <$> leftAdjoint galois x
+    p None = pure None
+    p (Some x) = lift $ Some <$> leftAdjoint galois x
 
 leftLflat :: MALens a (Either a b)
 leftLflat = MALens g p
   where
     g = Left
-    p _ (Left a) = pure a
-    p _ (Right _) = err "leftLflat: updated to right"
+    p (Left a) = pure a
+    p (Right _) = lift $ err "leftLflat: updated to right"
 
 rightLflat :: MALens b (Either a b)
 rightLflat = MALens g p
   where
     g = Right
-    p _ (Right a) = pure a
-    p _ (Left _) = err "rightLflat: updated to left"
+    p (Right a) = pure a
+    p (Left _) = lift $ err "rightLflat: updated to left"
 
 dist :: MALens (M (Either a b, c)) (M (Either (a, c) (b, c)))
 dist = liftGalois $ Galois g f
@@ -140,9 +187,9 @@ constL :: (Eq b, Discrete b, LowerBounded a) => b -> MALens a b
 constL b = MALens g p
   where
     g _ = b
-    p a b'
-      | b' == b = pure a
-      | otherwise = err "constL: update on constant"
+    p b'
+      | b' == b = getOrig
+      | otherwise = lift $ err "constL: update on constant"
 
 assertEqL :: (Eq a) => a -> MALens (M a) (M ())
 assertEqL c = liftGalois $ Galois f g
@@ -156,7 +203,7 @@ inspectL :: (Show a) => String -> MALens a a
 inspectL s =
   MALens
     (\x -> trace ("fwd" <> ss <> ": " <> show x) x)
-    (const $ \x -> trace ("bwd" <> ss <> ": " <> show x) (pure x))
+    (\x -> trace ("bwd" <> ss <> ": " <> show x) (pure x))
   where
     ss = if null s then "" else "[" ++ s ++ "]"
 
@@ -164,16 +211,19 @@ pairM :: MALens (M a, M b) (M (a, b))
 pairM = MALens g p
   where
     g (a, b) = liftA2 (,) a b
-    p _ (Some (a, b)) = pure (Some a, Some b)
-    p _ None = pure (None, None)
+    p (Some (a, b)) = pure (Some a, Some b)
+    p None = pure (None, None)
 
 introM :: (Discrete a) => MALens a (M a)
-introM = MALens Some $ \s v -> case v of
+introM = MALens Some $ \case
   Some a -> pure a
-  None -> pure s
+  None -> getOrig
+
+defaultL :: (Discrete a) => MALens a (M a)
+defaultL = introM
 
 introMLb :: (LowerBounded a) => MALens a (M a)
-introMLb = MALens Some $ \_ v -> case v of
+introMLb = MALens Some $ \case
   Some a -> pure a
   None -> pure least
 
@@ -182,101 +232,43 @@ joinM = MALens g p
   where
     g (Some a) = a
     g None = least
-    p _ a
+    p a
       | isLeast a = pure None
       | otherwise = pure $ Some a
 
 deleteUnit :: MALens ((), a) a
-deleteUnit = MALens snd (const $ \a -> pure ((), a))
+deleteUnit = MALens snd (\a -> pure ((), a))
 
 introUnit :: MALens a ((), a)
-introUnit = MALens (\a -> ((), a)) (const $ pure . snd)
+introUnit = MALens (\a -> ((), a)) (pure . snd)
 
 snapshot :: (Discrete c) => (c -> MALens a b) -> MALens (a, c) (b, c)
 snapshot k = MALens g p
   where
     g (a, c) = (get (k c) a, c)
-    p (a, _) (b, c) = do
-      a' <- put (k c) a b
+    p (b, c) = do
+      a' <- withReaderT (fmap fst) $ putM (k c) b
       pure (a', c)
 
 snapshotMissing ::
-  (Discrete c, LowerBounded a) =>
+  forall a b c.
+  (Discrete c) =>
   (c -> MALens a b)
-  -> MALens (a, M c) (M (b, c))
+  -> MALens (M (a, M c)) (M (b, c))
 snapshotMissing k = MALens g p
   where
-    g (_, None) = None
-    g (a, Some c) = Some (get (k c) a, c)
+    g (NoneWith s) = NoneWith s
+    g (Some (_, NoneWith s)) = NoneWith s
+    g (Some (a, Some c)) = Some (get (k c) a, c)
 
-    p (_, _) None = pure (least, None)
-    p (a, _) (Some (b, c)) = do
-      a' <- put (k c) a b
-      pure (a', Some c)
+    ext :: Maybe (M (a, M c)) -> Maybe a
+    ext x =
+      x >>= \case
+        Some (a, _) -> Just a
+        _ -> Nothing
 
-depLens :: (Discrete c) => MALens a c -> (c -> MALens d b) -> MALens (a, d) (c, b)
-depLens l k = first l >>> swapL >>> snapshot k >>> swapL
-
-liftMissing :: (HasCallStack) => MALens a b -> MALens (M a) (M b)
-liftMissing l = MALens g p
-  where
-    g (Some x) = Some (get l x)
-    g None = None
-
-    p _ None = pure None
-    p (Some s) (Some v) = Some <$> put l s v
-    p None (Some _) = err $ "put liftMissing: None (Some _)\n" ++ show (getCallStack callStack)
-
-liftMissingDefault :: a -> MALens a b -> MALens (M a) (M b)
-liftMissingDefault a0 l = MALens g p
-  where
-    g (Some x) = Some (get l x)
-    g None = None
-
-    p _ None = pure None
-    p (Some s) (Some v) = Some <$> put l s v
-    p None (Some v) = Some <$> put l a0 v
-
--- assertEqL :: (Eq a, Discrete a) => a -> MALens (M a) (M ())
--- assertEqL a0 = MALens g p
---   where
---     g (Some a) | a == a0 = Some ()
---     g _ = None
-
---     p _ (Some _) = pure (Some a0)
---     p _ None = pure None
-
-cond ::
-  (Discrete c) =>
-  MALens a (M c)
-  -> (Maybe b -> c -> Err a)
-  -> MALens b (M c)
-  -> (Maybe a -> c -> Err b)
-  -> (c -> Bool)
-  -> MALens (M (Either a b)) (M c)
-cond l1 r1 l2 r2 p = MALens getCond putCond
-  where
-    check phi (Some a) | phi a = Some a
-    check _ _ = None
-
-    getCond (Some (Left a)) =
-      check p (get l1 a)
-    getCond (Some (Right b)) =
-      check (not . p) (get l2 b)
-    getCond None = None
-    putCond _ None = pure None
-    putCond s (Some c)
-      | p c = do
-          src <- case s of
-            Some (Left a) -> pure a
-            Some (Right b) -> r1 (Just b) c
-            None -> r1 Nothing c
-          a' <- put l1 src (Some c)
-          pure (Some (Left a'))
-      | otherwise = do
-          src <- case s of
-            Some (Left a) -> r2 (Just a) c
-            Some (Right b) -> pure b
-            None -> r2 Nothing c
-          b' <- put l2 src (Some c)
-          pure (Some (Right b'))
+    p :: M (b, c) -> ReaderT (Maybe (M (a, M c))) Err (M (a, M c))
+    p None = pure None
+    p (Some (b, c)) = do
+      a' <- withReaderT ext $ putM (k c) b
+      pure (Some (a', Some c))

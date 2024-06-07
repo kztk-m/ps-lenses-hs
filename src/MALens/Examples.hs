@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -9,6 +10,9 @@ import Control.Category
 import Prelude hiding (id, (.))
 
 import MALens
+
+import Domain
+import Err
 
 import qualified Data.Map as M
 import Data.Maybe (fromJust)
@@ -176,7 +180,8 @@ fromContainer ::
   (Ord k, Discrete k, Discrete a) =>
   MALens (M (M.Map k a, [k])) (M [(k, a)])
 fromContainer =
-  liftMissing
+  liftMissingDefault
+    (M.empty, [])
     ( introM
         *** (introM >>> outListL)
         >>> swapL
@@ -195,6 +200,7 @@ fromContainer =
     lRec Nothing vs = pure ((), M.fromList vs)
 
     rRec :: Maybe ((), M.Map k a) -> [(k, a)] -> Err ((k, [k]), M.Map k a)
+    rRec (Just (_, m)) ((k, _) : _) = pure ((k, []), m)
     rRec _ vs@((k, _) : _) = pure ((k, []), M.fromList vs)
     -- rRec Nothing vs@((k, _) : _) = pure ((k, []), M.fromList vs)
     rRec _ _ = err "Cannot happen?"
@@ -211,9 +217,15 @@ fromContainer =
                 >>> dist
                 >>> cond br1 rec1 (br2 k) (rec2 k) (notElem k . map fst)
           )
+        >>> inspectL "after-ss"
         >>> second introM
         >>> swapL
-        >>> snapshotMissing (\xs -> assertEqL (fst $ head xs))
+        >>> snapshotMissing
+          ( \case
+              [] -> constL () >>> introM
+              (k, _) : _ -> assertEqL k
+          )
+        >>> inspectL "after-erasing-k"
         >>> liftMissingDefault (None, []) (second introM >>> pairM >>> liftMissingDefault ((), []) deleteUnit)
         >>> inspectL "h1"
         >>> joinM
@@ -226,7 +238,7 @@ fromContainer =
         -- >>> liftMissingDefault ((), []) deleteUnit
 
         br1 :: MALens (M.Map k a, [k]) (M [(k, a)])
-        br1 = introM >>> fromContainer
+        br1 = inspectL "br1" >>> introM >>> fromContainer
 
         rec1 :: Maybe ((a, M.Map k a), [k]) -> [(k, a)] -> Err (M.Map k a, [k])
         rec1 _ v = pure (M.fromList v, map fst v)
@@ -236,7 +248,7 @@ fromContainer =
           assocToRightL
             >>> (introM *** (introM >>> fromContainer))
             >>> introUnit
-            >>> first (introM >>> constL k)
+            >>> first (introM >>> constL k >>> introM)
             >>> assocToLeftL
             >>> first pairM
             >>> pairM
@@ -252,7 +264,7 @@ fromContainer =
 -- None
 
 -- >>> put fromContainer (Some (M.fromList [], [])) $ Some [("a",0),("b",1)]
--- Err ["put liftMissing: None (Some _)"]
+-- Ok (Some (fromList [("a",0.0),("b",1.0)],["a","b"]))
 
 mapKeyBody ::
   forall k a b.
@@ -296,3 +308,26 @@ testL = mapKeyBody (0 :: Int, "") (liftMissing (second introM >>> fstL))
 
 --- >>> put testL (Some $ M.fromList [("Alice",(0,"Hey")), ("Bob",(1,"Bbb")), ("Cecil",(2,"Cxx"))], ["Alice","Bob","Cecil"]) (Some $ M.fromList [("Bob",99), ("David",100)], ["Bob", "David"])
 -- Ok (Some (fromList [("Bob",(99,"Bbb")),("David",(100,""))]),["Bob","David"])
+
+mapKey ::
+  (Ord k, Discrete a, Discrete k, Discrete b, Show k, Show b) =>
+  a
+  -> MALens (M a) (M b)
+  -> MALens (M [(k, a)]) (M [(k, b)])
+mapKey def f =
+  toContainer
+    >>> liftMissingDefault (M.empty, []) (first introM >>> mapKeyBody def f >>> second introM >>> pairM)
+    >>> joinM
+    >>> fromContainer
+
+testMK :: (Ord k, Discrete k, Show k) => MALens (M [(k, (Int, String))]) (M [(k, Int)])
+testMK = mapKey (0 :: Int, "") (liftMissing (second introM >>> fstL))
+
+-- >>> get testMK (Some [("Alice",(0,"Hey")), ("Bob",(1,"Bbb")), ("Cecil",(2,"Cxx"))])
+-- Some [("Alice",0),("Bob",1),("Cecil",2)]
+
+-- >>> put testMK (Some [("Alice",(0,"Hey")), ("Bob",(1,"Bbb")), ("Cecil",(2,"Cxx"))]) (Some [("Bob",1),("David",2),("Alice",99)])
+-- Ok (Some [("Bob",(1,"Bbb")),("David",(2,"")),("Alice",(99,"Hey"))])
+
+-- >>> put testMK None (Some [("Bob",1),("David",2),("Alice",99)])
+-- Ok (Some [("Bob",(1,"")),("David",(2,"")),("Alice",(99,""))])
