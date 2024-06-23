@@ -13,6 +13,9 @@ import Err
 
 class LowerBounded a where
   least :: a
+  least = leastWith []
+  leastWith :: [String] -> a
+  leastWith _ = least
 
 class (LowerBounded a) => CheckLeast a where
   isLeast :: a -> Bool
@@ -87,12 +90,14 @@ instance CheckLeast () where
 
 instance LowerBounded (M a) where
   least = None
+  leastWith = NoneWith
 instance CheckLeast (M a) where
   isLeast None = True
   isLeast _ = False
 
 instance (LowerBounded a, LowerBounded b) => LowerBounded (a, b) where
   least = (least, least)
+  leastWith s = (leastWith s, leastWith s)
 
 instance (CheckLeast a, CheckLeast b) => CheckLeast (a, b) where
   isLeast (a, b) = isLeast a && isLeast b

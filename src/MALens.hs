@@ -1,9 +1,10 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
-
 {-# HLINT ignore "Use tuple-section" #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module MALens where
 
@@ -16,6 +17,7 @@ import qualified Data.Map as M
 import Debug.Trace (trace)
 import GHC.Stack (HasCallStack, callStack, getCallStack)
 
+import qualified Control.Arrow
 import Domain
 import Err
 
@@ -56,6 +58,11 @@ swapL = MALens sw (const $ pure . sw)
   where
     sw (x, y) = (y, x)
 
+swapM :: MALens (M (a, b)) (M (b, a))
+swapM = liftGalois $ Galois sw sw
+  where
+    sw (x, y) = pure (y, x)
+
 assocToRightL :: MALens ((a, b), c) (a, (b, c))
 assocToRightL = MALens f g
   where
@@ -80,11 +87,11 @@ dup = MALens (\a -> (a, a)) (\_ (a1, a2) -> lub a1 a2)
 liftGalois :: Galois b a -> MALens (M a) (M b)
 liftGalois galois = MALens g p
   where
-    g None = None
+    g (NoneWith s) = NoneWith s
     g (Some y) =
       case rightAdjoint galois y of
         Ok x -> Some x
-        Err _ -> None
+        Err s -> NoneWith s
 
     p _ None = pure None
     p _ (Some x) = Some <$> leftAdjoint galois x
@@ -167,27 +174,118 @@ pairM = MALens g p
     p _ (Some (a, b)) = pure (Some a, Some b)
     p _ None = pure (None, None)
 
-introM :: (Discrete a) => MALens a (M a)
-introM = MALens Some $ \s v -> case v of
+introMd :: (Discrete a) => MALens a (M a)
+introMd = MALens Some $ \s v -> case v of
   Some a -> pure a
   None -> pure s
 
-introMLb :: (LowerBounded a) => MALens a (M a)
-introMLb = MALens Some $ \_ v -> case v of
+introMl :: (LowerBounded a) => MALens a (M a)
+introMl = MALens Some $ \_ v -> case v of
   Some a -> pure a
   None -> pure least
+
+unpairMdd :: (Discrete a, Discrete b) => a -> b -> MALens (M (a, b)) (M a, M b)
+unpairMdd a0 b0 = letMd (a0, b0) (introMd *** introMd)
+
+unpairMll :: (CheckLeast a, CheckLeast b) => MALens (M (a, b)) (M a, M b)
+unpairMll = joinM >>> (introMl *** introMl)
+
+data Witness a where
+  WithLowerBounded :: (LowerBounded a) => Witness a
+  WithDiscrete :: (Discrete a) => a -> Witness a
+
+unpairM ::
+  (Witness a, Witness b) -> MALens (M (a, b)) (M a, M b)
+unpairM (wa, wb) = MALens g p
+  where
+    g None = (None, None)
+    g (Some (a, b)) = (Some a, Some b)
+
+    recover :: Witness t -> M t -> M t -> t
+    recover _ _ (Some a) = a
+    recover w s None =
+      case w of
+        WithLowerBounded -> least
+        WithDiscrete s0 ->
+          case s of
+            Some a -> a
+            None -> s0
+
+    p _ (None, None) = pure None
+    p s (ma, mb) = pure $ Some (recover wa (fst <$> s) ma, recover wb (snd <$> s) mb)
+
+unpairMdl :: (Discrete a, LowerBounded b) => a -> MALens (M (a, b)) (M a, M b)
+unpairMdl d = unpairM (WithDiscrete d, WithLowerBounded)
+
+unpairMld :: (LowerBounded a, Discrete b) => b -> MALens (M (a, b)) (M a, M b)
+unpairMld d = unpairM (WithLowerBounded, WithDiscrete d)
+
+-- >>> get unpairMll (Some (Some 1, Some 2))
+-- (Some (Some 1),Some (Some 2))
+-- >>> get unpairMll (Some (None, None))
+-- (Some (NoneWith []),Some (NoneWith []))
+-- >>> get unpairMll None
+-- (Some (),Some ())
+
+-- >>> put unpairMll None (None, None)
+-- Ok (NoneWith [])
+-- >>> put unpairMll None (Some (Some 1), Some (Some 2))
+-- Ok (Some (Some 1,Some 2))
+-- >>> put unpairMll None (Some None, Some (Some 2))
+-- Ok (Some (NoneWith [],Some 2))
+-- >>> put unpairMll None (None :: M (M Int), Some (Some 2))
+-- Ok (Some (NoneWith [],Some 2))
+
+-- introMinMfst :: (Discrete a) => a -> MALens (M (a, b)) (M (M a, b))
+-- introMinMfst defaultValue = MALens g p
+--   where
+--     g = fmap (Control.Arrow.first Some)
+
+--     p _ None = pure None
+--     p _ (Some (Some a, b)) = pure $ Some (a, b)
+--     p s (Some (None, b)) = case s of
+--       None -> pure $ Some (defaultValue, b)
+--       Some (a0, _) -> pure $ Some (a0, b)
+
+-- introMinMsnd :: (Discrete a) => a -> MALens (M (b, a)) (M (b, M a))
+-- introMinMsnd defaultValue = swapM . introMinMfst defaultValue . swapM
+
+-- introMinMfstLb :: (LowerBounded a) => MALens (M (a, b)) (M (M a, b))
+-- introMinMfstLb = MALens g p
+--   where
+--     g = fmap (Control.Arrow.first Some)
+
+--     p _ None = pure None
+--     p _ (Some (Some a, b)) = pure $ Some (a, b)
+--     p _ (Some (None, b)) = pure $ Some (least, b)
+
+-- introMinMsndLb :: (LowerBounded b) => MALens (M (a, b)) (M (a, M b))
+-- introMinMsndLb = swapM . introMinMfstLb . swapM
 
 joinM :: (CheckLeast a) => MALens (M a) a
 joinM = MALens g p
   where
     g (Some a) = a
-    g None = least
+    g (NoneWith s) = leastWith s
     p _ a
       | isLeast a = pure None
       | otherwise = pure $ Some a
 
+letMd :: (Discrete a, CheckLeast b) => a -> MALens a b -> MALens (M a) b
+letMd def l = MALens g p
+  where
+    g (Some a) = get l a
+    g (NoneWith s) = leastWith s
+
+    p s v
+      | isLeast v = pure None
+      | otherwise = Some <$> put l (case s of None -> def; Some a -> a) v
+
 deleteUnit :: MALens ((), a) a
 deleteUnit = MALens snd (const $ \a -> pure ((), a))
+
+deleteUnitM :: MALens (M ((), b)) (M b)
+deleteUnitM = liftGalois $ Galois (\a -> pure ((), a)) (\(_, a) -> pure a)
 
 introUnit :: MALens a ((), a)
 introUnit = MALens (\a -> ((), a)) (const $ pure . snd)
@@ -200,19 +298,21 @@ snapshot k = MALens g p
       a' <- put (k c) a b
       pure (a', c)
 
-snapshotMissing ::
-  (Discrete c, LowerBounded a) =>
+snapshotM ::
+  (Discrete c) =>
   (c -> MALens a b)
-  -> MALens (a, M c) (M (b, c))
-snapshotMissing k = MALens g p
+  -> MALens (M (a, M c)) (M (b, c))
+snapshotM k = MALens g p
   where
-    g (_, None) = None
-    g (a, Some c) = Some (get (k c) a, c)
+    g None = None
+    g (Some (_, None)) = None
+    g (Some (a, Some c)) = Some (get (k c) a, c)
 
-    p (_, _) None = pure (least, None)
-    p (a, _) (Some (b, c)) = do
+    p _ None = pure None
+    p (Some (a, _)) (Some (b, c)) = do
       a' <- put (k c) a b
-      pure (a', Some c)
+      pure $ Some (a', Some c)
+    p None (Some (b, c)) = err "Error: put snapshotM None (Some _)"
 
 depLens :: (Discrete c) => MALens a c -> (c -> MALens d b) -> MALens (a, d) (c, b)
 depLens l k = first l >>> swapL >>> snapshot k >>> swapL
@@ -221,7 +321,7 @@ liftMissing :: (HasCallStack) => MALens a b -> MALens (M a) (M b)
 liftMissing l = MALens g p
   where
     g (Some x) = Some (get l x)
-    g None = None
+    g (NoneWith s) = NoneWith s
 
     p _ None = pure None
     p (Some s) (Some v) = Some <$> put l s v
@@ -231,7 +331,7 @@ liftMissingDefault :: a -> MALens a b -> MALens (M a) (M b)
 liftMissingDefault a0 l = MALens g p
   where
     g (Some x) = Some (get l x)
-    g None = None
+    g (NoneWith s) = NoneWith s
 
     p _ None = pure None
     p (Some s) (Some v) = Some <$> put l s v
