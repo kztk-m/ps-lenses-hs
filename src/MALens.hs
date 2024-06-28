@@ -13,11 +13,11 @@ import Control.Category
 import Prelude hiding (id, (.))
 
 import Control.Monad (zipWithM)
-import qualified Data.Map as M
+import Data.Map qualified as M
 import Debug.Trace (trace)
 import GHC.Stack (HasCallStack, callStack, getCallStack)
 
-import qualified Control.Arrow
+import Control.Arrow qualified
 import Domain
 import Err
 
@@ -271,7 +271,7 @@ joinM = MALens g p
       | isLeast a = pure None
       | otherwise = pure $ Some a
 
-letMd :: (Discrete a, CheckLeast b) => a -> MALens a b -> MALens (M a) b
+letMd :: (CheckLeast b) => a -> MALens a b -> MALens (M a) b
 letMd def l = MALens g p
   where
     g (Some a) = get l a
@@ -280,6 +280,19 @@ letMd def l = MALens g p
     p s v
       | isLeast v = pure None
       | otherwise = Some <$> put l (case s of None -> def; Some a -> a) v
+
+-- >>> get (letMd undefined introMl) (Some $ Some "a")
+-- >>> get (letMd undefined introMl) (Some None)
+-- >>> get (letMd undefined introMl) None
+-- Some (Some "a")
+-- Some (NoneWith [])
+-- NoneWith []
+-- >>> put (letMd undefined introMl) undefined None
+-- >>> put (letMd undefined introMl) undefined (Some None)
+-- >>> put (letMd undefined introMl) undefined (Some $ Some "A")
+-- Ok (NoneWith [])
+-- Ok (Some (NoneWith []))
+-- Ok (Some (Some "A"))
 
 deleteUnit :: MALens ((), a) a
 deleteUnit = MALens snd (const $ \a -> pure ((), a))
