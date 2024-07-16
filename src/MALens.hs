@@ -184,57 +184,41 @@ introMl = MALens Some $ \_ v -> case v of
   Some a -> pure a
   None -> pure least
 
-unpairMdd :: (Discrete a, Discrete b) => a -> b -> MALens (M (a, b)) (M a, M b)
-unpairMdd a0 b0 = letMd (a0, b0) (introMd *** introMd)
+-- unpairMdd :: (Discrete a, Discrete b) => a -> b -> MALens (M (a, b)) (M a, M b)
+-- unpairMdd a0 b0 = letM (a0, b0) (introMd *** introMd)
 
-unpairMll :: (CheckLeast a, CheckLeast b) => MALens (M (a, b)) (M a, M b)
-unpairMll = joinM >>> (introMl *** introMl)
+-- unpairMll :: (CheckLeast a, CheckLeast b) => MALens (M (a, b)) (M a, M b)
+-- unpairMll = joinM >>> (introMl *** introMl)
 
-data Witness a where
-  WithLowerBounded :: (LowerBounded a) => Witness a
-  WithDiscrete :: (Discrete a) => a -> Witness a
+-- data Witness a where
+--   WithLowerBounded :: (LowerBounded a) => Witness a
+--   WithDiscrete :: (Discrete a) => a -> Witness a
 
-unpairM ::
-  (Witness a, Witness b) -> MALens (M (a, b)) (M a, M b)
-unpairM (wa, wb) = MALens g p
-  where
-    g None = (None, None)
-    g (Some (a, b)) = (Some a, Some b)
+-- unpairM ::
+--   (Witness a, Witness b) -> MALens (M (a, b)) (M a, M b)
+-- unpairM (wa, wb) = MALens g p
+--   where
+--     g None = (None, None)
+--     g (Some (a, b)) = (Some a, Some b)
 
-    recover :: Witness t -> M t -> M t -> t
-    recover _ _ (Some a) = a
-    recover w s None =
-      case w of
-        WithLowerBounded -> least
-        WithDiscrete s0 ->
-          case s of
-            Some a -> a
-            None -> s0
+--     recover :: Witness t -> M t -> M t -> t
+--     recover _ _ (Some a) = a
+--     recover w s None =
+--       case w of
+--         WithLowerBounded -> least
+--         WithDiscrete s0 ->
+--           case s of
+--             Some a -> a
+--             None -> s0
 
-    p _ (None, None) = pure None
-    p s (ma, mb) = pure $ Some (recover wa (fst <$> s) ma, recover wb (snd <$> s) mb)
+--     p _ (None, None) = pure None
+--     p s (ma, mb) = pure $ Some (recover wa (fst <$> s) ma, recover wb (snd <$> s) mb)
 
-unpairMdl :: (Discrete a, LowerBounded b) => a -> MALens (M (a, b)) (M a, M b)
-unpairMdl d = unpairM (WithDiscrete d, WithLowerBounded)
+-- unpairMdl :: (Discrete a, LowerBounded b) => a -> MALens (M (a, b)) (M a, M b)
+-- unpairMdl d = unpairM (WithDiscrete d, WithLowerBounded)
 
-unpairMld :: (LowerBounded a, Discrete b) => b -> MALens (M (a, b)) (M a, M b)
-unpairMld d = unpairM (WithLowerBounded, WithDiscrete d)
-
--- >>> get unpairMll (Some (Some 1, Some 2))
--- (Some (Some 1),Some (Some 2))
--- >>> get unpairMll (Some (None, None))
--- (Some (NoneWith []),Some (NoneWith []))
--- >>> get unpairMll None
--- (Some (),Some ())
-
--- >>> put unpairMll None (None, None)
--- Ok (NoneWith [])
--- >>> put unpairMll None (Some (Some 1), Some (Some 2))
--- Ok (Some (Some 1,Some 2))
--- >>> put unpairMll None (Some None, Some (Some 2))
--- Ok (Some (NoneWith [],Some 2))
--- >>> put unpairMll None (None :: M (M Int), Some (Some 2))
--- Ok (Some (NoneWith [],Some 2))
+-- unpairMld :: (LowerBounded a, Discrete b) => b -> MALens (M (a, b)) (M a, M b)
+-- unpairMld d = unpairM (WithLowerBounded, WithDiscrete d)
 
 -- introMinMfst :: (Discrete a) => a -> MALens (M (a, b)) (M (M a, b))
 -- introMinMfst defaultValue = MALens g p
@@ -263,16 +247,10 @@ unpairMld d = unpairM (WithLowerBounded, WithDiscrete d)
 -- introMinMsndLb = swapM . introMinMfstLb . swapM
 
 joinM :: (CheckLeast a) => MALens (M a) a
-joinM = MALens g p
-  where
-    g (Some a) = a
-    g (NoneWith s) = leastWith s
-    p _ a
-      | isLeast a = pure None
-      | otherwise = pure $ Some a
+joinM = letM least id
 
-letMd :: (CheckLeast b) => a -> MALens a b -> MALens (M a) b
-letMd def l = MALens g p
+letM :: (CheckLeast b) => a -> MALens a b -> MALens (M a) b
+letM def l = MALens g p
   where
     g (Some a) = get l a
     g (NoneWith s) = leastWith s

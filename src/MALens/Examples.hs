@@ -14,7 +14,7 @@ import MALens
 import Domain
 import Err
 
-import qualified Data.Map as M
+import Data.Map qualified as M
 import Data.Maybe (fromJust)
 
 -- Examples
@@ -39,7 +39,8 @@ validateCheckSum'' =
   (introMd *** introMd)
     >>> introMl
     >>> snapshotM (\xs -> assertEqL (sum xs))
-    >>> unpairMld []
+    >>> letM (least, []) (introMl *** introMd)
+    -- >>> unpairMld []
     >>> first joinM
     --    >>> letMd undefined (second introMd)
     >>> pairM
@@ -47,10 +48,10 @@ validateCheckSum'' =
 
 validateCheckSumM :: MALens (M (Int, [Int])) (M [Int])
 validateCheckSumM =
-  letMd (0, []) (introMd *** introMd)
+  letM (0, []) (introMd *** introMd)
     >>> introMl
     >>> snapshotM (\xs -> assertEqL (sum xs))
-    >>> unpairMld []
+    >>> letM (least, []) (introMl *** introMd)
     >>> first joinM
     --    >>> letMd (None, []) (second introMd)
     >>> pairM
@@ -230,7 +231,7 @@ toContainer' =
         >>> introMl
         >>> snapshotM
           ( \k ->
-              second (unpairMdd M.empty []) -- second (introMinMfst M.empty >>> introMinMsnd [] >>> joinM)
+              second (letM (M.empty, []) (introMd *** introMd)) -- second (introMinMfst M.empty >>> introMinMsnd [] >>> joinM)
                 >>> assocToLeftL
                 >>> first (pairM >>> insertL k)
           )
@@ -502,8 +503,8 @@ mapKeyBody' ::
   -> MALens (M a) (M b)
   -> MALens (M (M.Map k a, [k])) (M (M.Map k b, [k]))
 mapKeyBody' def f =
-  letMd (M.empty, []) (introMd *** introMd) -- (introMinMfst M.empty >>> introMinMsnd [])
-    >>> (introMl)
+  letM (M.empty, []) (introMd *** introMd) -- (introMinMfst M.empty >>> introMinMsnd [])
+    >>> introMl
     >>> inspectL "mapKeyBody'"
     >>> snapshotM
       ( foldr
@@ -518,10 +519,12 @@ mapKeyBody' def f =
           )
           (emptyL . assertEmptyL)
       )
-    >>> unpairMld []
-    >>> first joinM
-    >>> pairM
+    >>> letM (least, []) (second introMd >>> pairM)
   where
+    -- >>> letM (least, []) (introMl *** introMd)
+    -- >>> first joinM
+    -- >>> pairM
+
     -- >>> introMinMsnd []
     -- >>> joinM
     -- >>> pairM
@@ -554,7 +557,7 @@ mapKey' ::
   -> MALens (M [(k, a)]) (M [(k, b)])
 mapKey' def f =
   toContainer'
-    >>> mapKeyBody' def f
+    >>> letM (M.empty, []) (introMd >>> mapKeyBody' def f)
     >>> fromContainer'
 
 testMK :: (Ord k, Discrete k, Show k) => MALens (M [(k, (Int, String))]) (M [(k, Int)])
@@ -579,4 +582,4 @@ testMK' = mapKey' (0 :: Int, "") (liftMissing (second introMd >>> fstL))
 -- Ok (Some [("Bob",(1,"Bbb")),("David",(2,"")),("Alice",(99,"Hey"))])
 
 -- >>> put testMK' None (Some [("Bob",1),("David",2),("Alice",99)])
--- Err ["recon2: expects the source value"]
+-- Ok (Some [("Bob",(1,"")),("David",(2,"")),("Alice",(99,""))])
