@@ -45,8 +45,8 @@ instance Category MALens where
 (***) :: MALens a c -> MALens b d -> MALens (a, b) (c, d)
 l1 *** l2 = MALens g p
   where
-    g (a, b) = (get l1 a, get l2 b)
-    p (a, b) (c, d) = liftA2 (,) (put l1 a c) (put l2 b d)
+    g ~(a, b) = (get l1 a, get l2 b)
+    p ~(a, b) ~(c, d) = liftA2 (,) (put l1 a c) (put l2 b d)
 
 first :: MALens a c -> MALens (a, d) (c, d)
 first l = l *** id
@@ -56,24 +56,24 @@ second l = id *** l
 swapL :: MALens (a, b) (b, a)
 swapL = MALens sw (const $ pure . sw)
   where
-    sw (x, y) = (y, x)
+    sw ~(x, y) = (y, x)
 
 swapM :: MALens (M (a, b)) (M (b, a))
 swapM = liftGalois $ Galois sw sw
   where
-    sw (x, y) = pure (y, x)
+    sw ~(x, y) = pure (y, x)
 
 assocToRightL :: MALens ((a, b), c) (a, (b, c))
 assocToRightL = MALens f g
   where
-    f ((a, b), c) = (a, (b, c))
-    g _ (a, (b, c)) = pure ((a, b), c)
+    f ~(~(a, b), c) = (a, (b, c))
+    g _ ~(a, ~(b, c)) = pure ((a, b), c)
 
 assocToLeftL :: MALens (a, (b, c)) ((a, b), c)
 assocToLeftL = MALens f g
   where
-    f (a, (b, c)) = ((a, b), c)
-    g _ ((a, b), c) = pure (a, (b, c))
+    f ~(a, ~(b, c)) = ((a, b), c)
+    g _ ~(~(a, b), c) = pure (a, (b, c))
 
 fstL :: (LowerBounded b) => MALens (a, b) a
 fstL = MALens fst (\_ a -> pure (a, least))
@@ -88,10 +88,10 @@ eraseUnspecL :: (LowerBounded a) => MALens a ()
 eraseUnspecL = MALens (const ()) (const $ const $ pure least)
 
 dup :: (Lub a) => MALens a (a, a)
-dup = MALens (\a -> (a, a)) (\_ (a1, a2) -> lub a1 a2)
+dup = MALens (\a -> (a, a)) (\_ ~(a1, a2) -> lub a1 a2)
 
 merge :: (Glb a) => MALens (a, a) a
-merge = MALens (uncurry glb) (\_ a -> pure (a, a))
+merge = MALens (\ ~(a1, a2) -> glb a1 a2) (\_ a -> pure (a, a))
 
 -- >>> get (merge >>> dup) (Some 1 :: M Int, Some 1)
 -- >>> get (merge >>> dup) (Some 1 :: M Int, Some 2)
@@ -145,11 +145,12 @@ rightLflat = MALens g p
 dist :: MALens (M (Either a b, c)) (M (Either (a, c) (b, c)))
 dist = liftGalois $ Galois g f
   where
-    f (Left a, c) = pure $ Left (a, c)
-    f (Right b, c) = pure $ Right (b, c)
+    f ~(x, c) = case x of
+      Left a -> pure $ Left (a, c)
+      Right b -> pure $ Right (b, c)
 
-    g (Left (a, c)) = pure (Left a, c)
-    g (Right (b, c)) = pure (Right b, c)
+    g (Left ~(a, c)) = pure (Left a, c)
+    g (Right ~(b, c)) = pure (Right b, c)
 
 leftL :: MALens (M a) (M (Either a b))
 leftL = liftGalois $ Galois fromLeft toLeft
@@ -202,8 +203,8 @@ inspectL s =
 pairM :: MALens (M a, M b) (M (a, b))
 pairM = MALens g p
   where
-    g (a, b) = liftA2 (,) a b
-    p _ (Some (a, b)) = pure (Some a, Some b)
+    g ~(a, b) = liftA2 (,) a b
+    p _ (Some ~(a, b)) = pure (Some a, Some b)
     p _ None = pure (None, None)
 
 introMd :: (Discrete a) => MALens a (M a)
@@ -259,8 +260,8 @@ introUnit = MALens (\a -> ((), a)) (const $ pure . snd)
 snapshot :: (Discrete c) => (c -> MALens a b) -> MALens (a, c) (b, c)
 snapshot k = MALens g p
   where
-    g (a, c) = (get (k c) a, c)
-    p (a, _) (b, c) = do
+    g ~(a, c) = (get (k c) a, c)
+    p ~(a, _) ~(b, c) = do
       a' <- put (k c) a b
       pure (a', c)
 
@@ -271,14 +272,15 @@ snapshotM ::
 snapshotM k = MALens g p
   where
     g None = None
-    g (Some (_, None)) = None
-    g (Some (a, Some c)) = Some (get (k c) a, c)
+    g (Some ~(a, y)) = case y of
+      None -> None
+      Some c -> Some (get (k c) a, c)
 
     p _ None = pure None
-    p (Some (a, _)) (Some (b, c)) = do
+    p (Some ~(a, _)) (Some ~(b, c)) = do
       a' <- put (k c) a b
       pure $ Some (a', Some c)
-    p None (Some (b, c)) = err "Error: put snapshotM None (Some _)"
+    p None (Some ~(b, c)) = err "Error: put snapshotM None (Some _)"
 
 depLens :: (Discrete c) => MALens a c -> (c -> MALens d b) -> MALens (a, d) (c, b)
 depLens l k = first l >>> swapL >>> snapshot k >>> swapL
