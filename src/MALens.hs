@@ -81,6 +81,12 @@ fstL = MALens fst (\_ a -> pure (a, least))
 sndL :: (LowerBounded a) => MALens (a, b) b
 sndL = MALens snd (\_ a -> pure (least, a))
 
+eraseL :: MALens a ()
+eraseL = MALens (const ()) (\s _ -> pure s)
+
+eraseUnspecL :: (LowerBounded a) => MALens a ()
+eraseUnspecL = MALens (const ()) (const $ const $ pure least)
+
 dup :: (Lub a) => MALens a (a, a)
 dup = MALens (\a -> (a, a)) (\_ (a1, a2) -> lub a1 a2)
 
