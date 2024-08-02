@@ -78,6 +78,12 @@ assocToLeftL = MALens f g
 fstL :: (LowerBounded b) => MALens (a, b) a
 fstL = MALens fst (\_ a -> pure (a, least))
 
+fstL' :: MALens (a, b) a
+fstL' = second eraseL >>> fstL
+
+sndL' :: MALens (a, b) b
+sndL' = first eraseL >>> sndL
+
 sndL :: (LowerBounded a) => MALens (a, b) b
 sndL = MALens snd (\_ a -> pure (least, a))
 
