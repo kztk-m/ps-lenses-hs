@@ -4,7 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
-module MALens.Examples where
+module MALens.Examples.Snapshotting where
 
 import Control.Category
 import Prelude hiding (id, (.))
