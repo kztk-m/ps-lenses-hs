@@ -17,8 +17,8 @@ common warnings
 
 library
     import:           warnings
-    exposed-modules:  MALens, MALens2, MALens.Examples
-    -- other-modules:
+    exposed-modules:  MALens, Err, Domain
+    other-modules:    MALens.Examples.Snapshotting, MALens.Examples.Dup 
     -- other-extensions:
     build-depends:    base ^>=4.17 || ^>=4.18, containers, mtl 
     hs-source-dirs:   src
