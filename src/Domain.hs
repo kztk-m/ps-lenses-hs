@@ -1,15 +1,29 @@
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
 
-module Domain where
+module Domain (
+  LowerBounded (..),
+  CheckLeast (..),
+  Discrete,
+  Lub (..),
+  Glb (..),
+  Glb' (..),
+  M (..),
+  pattern None,
+) where
 
-import qualified Data.Map as M
+import Data.Map qualified as M
 
 import Control.Applicative (liftA2)
 import Control.Monad (zipWithM)
 import Err
+
+import Distribution.Simple (LowerBound (LowerBound))
+import GHC.Generics qualified as Gen
 
 class LowerBounded a where
   least :: a
@@ -20,40 +34,116 @@ class LowerBounded a where
 class (LowerBounded a) => CheckLeast a where
   isLeast :: a -> Bool
 
+class GLub f where
+  glub :: f a -> f a -> Err (f a)
+
+instance GLub Gen.V1 where
+  glub x y =
+    case x of {} `seq` case y of {}
+
+instance GLub Gen.U1 where
+  glub _ _ = pure Gen.U1
+
+instance (GLub a, GLub b) => GLub (a Gen.:*: b) where
+  glub (x Gen.:*: y) (x' Gen.:*: y') =
+    liftA2 (Gen.:*:) (glub x x') (glub y y')
+
+instance (GLub a, GLub b) => GLub (a Gen.:+: b) where
+  glub (Gen.L1 x) (Gen.L1 x') = Gen.L1 <$> glub x x'
+  glub (Gen.R1 x) (Gen.R1 x') = Gen.R1 <$> glub x x'
+  glub _ _ = err "lub: expects elements with the same tag"
+
+instance (GLub f) => GLub (Gen.M1 i t f) where
+  glub (Gen.M1 c) (Gen.M1 c') = Gen.M1 <$> glub c c'
+instance (Lub c) => GLub (Gen.K1 i c) where
+  glub (Gen.K1 c) (Gen.K1 c') = Gen.K1 <$> lub c c'
+
 class Lub a where
   lub :: a -> a -> Err a
+  default lub :: (Gen.Generic a, GLub (Gen.Rep a)) => a -> a -> Err a
+  lub x y = Gen.to <$> glub (Gen.from x) (Gen.from y)
 
-instance Lub () where
-  lub _ _ = pure ()
-
-instance (Lub a, Lub b) => Lub (a, b) where
-  lub (a1, b1) (a2, b2) = liftA2 (,) (lub a1 a2) (lub b1 b2)
-
-instance (Lub a, Lub b) => Lub (Either a b) where
-  lub (Left a) (Left a') = Left <$> lub a a'
-  lub (Right b) (Right b') = Right <$> lub b b'
-  lub _ _ = err "lub: expects elements with the same tags"
-
-instance (Lub a) => Lub [a] where
-  lub xs ys
-    | length xs == length ys = zipWithM lub xs ys
-    | otherwise = err "lub: lists with different lengths"
+instance Lub ()
+instance (Lub a, Lub b) => Lub (a, b)
+instance (Lub a, Lub b) => Lub (Either a b)
+instance (Lub a) => Lub [a]
 
 instance (Lub a) => Lub (M a) where
   lub None m = pure m
   lub m None = pure m
   lub (Some a) (Some b) = Some <$> lub a b
 
+class Glb a where
+  -- Unlike 'lub', we require glb as it is assumed to be used in get
+  glb :: a -> a -> a
+
+class GGlb' f where
+  gglb' :: f a -> f a -> Err (f a)
+
+instance GGlb' Gen.V1 where
+  gglb' x y =
+    case x of {} `seq` case y of {}
+
+instance GGlb' Gen.U1 where
+  gglb' _ _ = pure Gen.U1
+
+instance (GGlb' a, GGlb' b) => GGlb' (a Gen.:*: b) where
+  gglb' (x Gen.:*: y) (x' Gen.:*: y') =
+    liftA2 (Gen.:*:) (gglb' x x') (gglb' y y')
+
+instance (GGlb' a, GGlb' b) => GGlb' (a Gen.:+: b) where
+  gglb' (Gen.L1 x) (Gen.L1 x') = Gen.L1 <$> gglb' x x'
+  gglb' (Gen.R1 x) (Gen.R1 x') = Gen.R1 <$> gglb' x x'
+  gglb' _ _ = err "lub: expects elements with the same tag"
+
+instance (GGlb' f) => GGlb' (Gen.M1 i t f) where
+  gglb' (Gen.M1 c) (Gen.M1 c') = Gen.M1 <$> gglb' c c'
+instance (Glb' c) => GGlb' (Gen.K1 i c) where
+  gglb' (Gen.K1 c) (Gen.K1 c') = Gen.K1 <$> glb' c c'
+
+class Glb' a where
+  glb' :: a -> a -> Err a
+  default glb' :: (Gen.Generic a, GGlb' (Gen.Rep a)) => a -> a -> Err a
+  glb' x y = Gen.to <$> gglb' (Gen.from x) (Gen.from y)
+
+instance Glb () where
+  glb = const $ const ()
+instance (Glb a, Glb b) => Glb (a, b) where
+  glb (a, b) (a', b') = (glb a a', glb b b')
+
+instance (Glb' a) => Glb (M a) where
+  glb (NoneWith s) m = NoneWith s
+  glb m (NoneWith s) = NoneWith s
+  glb (Some a) (Some a') =
+    case glb' a a' of
+      Ok r -> Some r
+      Err s -> NoneWith s
+
+instance Glb' ()
+instance (Glb' a, Glb' b) => Glb' (a, b)
+instance (Glb' a, Glb' b) => Glb' (Either a b)
+instance (Glb' a) => Glb' [a]
+
 newtype EqDisc a = EqDisc a deriving (Eq)
 
 instance (Discrete a, Eq a) => Lub (EqDisc a) where
-  lub a b = if a == b then pure a else err "lub: failed"
+  lub a b = if a == b then pure a else err "lub: no lub for different elements in a disrete domain."
 deriving via EqDisc Int instance Lub Int
 deriving via EqDisc Double instance Lub Double
 deriving via EqDisc Bool instance Lub Bool
 deriving via EqDisc Char instance Lub Char
 
+instance (Discrete a, Eq a) => Glb' (EqDisc a) where
+  glb' a b = if a == b then pure a else err "glb': no glb for diffrent elements in a discrete domain."
+
+deriving via EqDisc Int instance Glb' Int
+deriving via EqDisc Double instance Glb' Double
+deriving via EqDisc Bool instance Glb' Bool
+deriving via EqDisc Char instance Glb' Char
+
 class Discrete a
+
+-- no method, intentionally
 
 instance Discrete ()
 instance Discrete Int

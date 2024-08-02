@@ -90,6 +90,32 @@ eraseUnspecL = MALens (const ()) (const $ const $ pure least)
 dup :: (Lub a) => MALens a (a, a)
 dup = MALens (\a -> (a, a)) (\_ (a1, a2) -> lub a1 a2)
 
+merge :: (Glb a) => MALens (a, a) a
+merge = MALens (uncurry glb) (\_ a -> pure (a, a))
+
+-- >>> get (merge >>> dup) (Some 1 :: M Int, Some 1)
+-- >>> get (merge >>> dup) (Some 1 :: M Int, Some 2)
+-- >>> get (merge >>> dup) (Some 1 :: M Int, None)
+-- (Some 1,Some 1)
+-- (NoneWith ["glb': no glb for diffrent elements in a discrete domain."],NoneWith ["glb': no glb for diffrent elements in a discrete domain."])
+-- (NoneWith [],NoneWith [])
+-- >>> put (merge >>> dup) undefined (Some 1 :: M Int, Some 1)
+-- >>> put (merge >>> dup) undefined (Some 1 :: M Int, Some 2)
+-- >>> put (merge >>> dup) undefined (Some 1 :: M Int, None)
+-- Ok (Some 1,Some 1)
+-- Err ["lub: no lub for different elements in a disrete domain."]
+-- Ok (Some 1,Some 1)
+
+-- >>> get (dup >>> merge) None
+-- >>> get (dup >>> merge) (Some 1 :: M Int)
+-- NoneWith []
+-- Some 1
+
+-- >>> put (dup >>> merge) undefined None
+-- >>> put (dup >>> merge) undefined (Some 1 :: M Int)
+-- Ok (NoneWith [])
+-- Ok (Some 1)
+
 liftGalois :: Galois b a -> MALens (M a) (M b)
 liftGalois galois = MALens g p
   where
@@ -190,68 +216,6 @@ introMl = MALens Some $ \_ v -> case v of
   Some a -> pure a
   None -> pure least
 
--- unpairMdd :: (Discrete a, Discrete b) => a -> b -> MALens (M (a, b)) (M a, M b)
--- unpairMdd a0 b0 = letM (a0, b0) (introMd *** introMd)
-
--- unpairMll :: (CheckLeast a, CheckLeast b) => MALens (M (a, b)) (M a, M b)
--- unpairMll = joinM >>> (introMl *** introMl)
-
--- data Witness a where
---   WithLowerBounded :: (LowerBounded a) => Witness a
---   WithDiscrete :: (Discrete a) => a -> Witness a
-
--- unpairM ::
---   (Witness a, Witness b) -> MALens (M (a, b)) (M a, M b)
--- unpairM (wa, wb) = MALens g p
---   where
---     g None = (None, None)
---     g (Some (a, b)) = (Some a, Some b)
-
---     recover :: Witness t -> M t -> M t -> t
---     recover _ _ (Some a) = a
---     recover w s None =
---       case w of
---         WithLowerBounded -> least
---         WithDiscrete s0 ->
---           case s of
---             Some a -> a
---             None -> s0
-
---     p _ (None, None) = pure None
---     p s (ma, mb) = pure $ Some (recover wa (fst <$> s) ma, recover wb (snd <$> s) mb)
-
--- unpairMdl :: (Discrete a, LowerBounded b) => a -> MALens (M (a, b)) (M a, M b)
--- unpairMdl d = unpairM (WithDiscrete d, WithLowerBounded)
-
--- unpairMld :: (LowerBounded a, Discrete b) => b -> MALens (M (a, b)) (M a, M b)
--- unpairMld d = unpairM (WithLowerBounded, WithDiscrete d)
-
--- introMinMfst :: (Discrete a) => a -> MALens (M (a, b)) (M (M a, b))
--- introMinMfst defaultValue = MALens g p
---   where
---     g = fmap (Control.Arrow.first Some)
-
---     p _ None = pure None
---     p _ (Some (Some a, b)) = pure $ Some (a, b)
---     p s (Some (None, b)) = case s of
---       None -> pure $ Some (defaultValue, b)
---       Some (a0, _) -> pure $ Some (a0, b)
-
--- introMinMsnd :: (Discrete a) => a -> MALens (M (b, a)) (M (b, M a))
--- introMinMsnd defaultValue = swapM . introMinMfst defaultValue . swapM
-
--- introMinMfstLb :: (LowerBounded a) => MALens (M (a, b)) (M (M a, b))
--- introMinMfstLb = MALens g p
---   where
---     g = fmap (Control.Arrow.first Some)
-
---     p _ None = pure None
---     p _ (Some (Some a, b)) = pure $ Some (a, b)
---     p _ (Some (None, b)) = pure $ Some (least, b)
-
--- introMinMsndLb :: (LowerBounded b) => MALens (M (a, b)) (M (a, M b))
--- introMinMsndLb = swapM . introMinMfstLb . swapM
-
 joinM :: (CheckLeast a) => MALens (M a) a
 joinM = letM least id
 
@@ -277,6 +241,11 @@ letM def l = MALens g p
 -- Ok (NoneWith [])
 -- Ok (Some (NoneWith []))
 -- Ok (Some (Some "A"))
+
+-- A specialized version of sndL (recall that () is an instance of LowerBounded)
+-- Also, sndL can be defined via deleteUnit as:
+--
+-- prop> sndL == (eraseUnspecL *** id) >>> deleteUnit
 
 deleteUnit :: MALens ((), a) a
 deleteUnit = MALens snd (const $ \a -> pure ((), a))
