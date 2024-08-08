@@ -108,6 +108,7 @@ example3 = example1 >>> second (repair (0, 0)) >>> assocToLeftL >>> first (repai
 -- Err ["lub: no lub for different elements in a disrete domain."]
 -- Ok (Some 2,Some 2)
 
+-- This makes the second component None if the first component is so.
 repair1 :: (Discrete a, Discrete b) => a -> MALens (M a, M b) (M a, M b)
 repair1 a0 = second introMl >>> pairM >>> letM (a0, least) (first introMd)
 
@@ -118,14 +119,23 @@ repair1 a0 = second introMl >>> pairM >>> letM (a0, least) (first introMd)
 -- (Some 1,NoneWith [])
 -- (NoneWith [],NoneWith [])
 
+-- In the put direction, there will not be an issue if the first component is
+-- present.
+
 -- >>> put (repair1 @Int @Int 0) undefined (Some 3, Some 4)
 -- >>> put (repair1 @Int @Int 0) undefined (Some 3, None)
+-- Ok (Some 3,Some 4)
+-- Ok (Some 3,NoneWith [])
+
+-- If the first component is None while the second is present in the updated
+-- view, the lens is requested to return (Some _, Some _) as otherwise, the
+-- second component will be None. So, it uses the original source if it is
+-- present, and otherwise use a default value given as an argument.
+
 -- >>> put (repair1 @Int @Int 0) (Some 1, undefined) (None, Some 4)
 -- >>> put (repair1 @Int @Int 0) (None, undefined) (None, Some 4)
 -- >>> put (repair1 @Int @Int 0) (Some 1, undefined) (None, None)
 -- >>> put (repair1 @Int @Int 0) (None, undefined) (None, None)
--- Ok (Some 3,Some 4)
--- Ok (Some 3,NoneWith [])
 -- Ok (Some 1,Some 4)
 -- Ok (Some 0,Some 4)
 -- Ok (NoneWith [],NoneWith [])
