@@ -1,9 +1,14 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Domain (
   LowerBounded (..),
@@ -16,14 +21,11 @@ module Domain (
   pattern None,
 ) where
 
-import Data.Map qualified as M
+import qualified Data.Map as M
 
-import Control.Applicative (liftA2)
-import Control.Monad (zipWithM)
 import Err
 
-import Distribution.Simple (LowerBound (LowerBound))
-import GHC.Generics qualified as Gen
+import qualified GHC.Generics as Gen
 
 class LowerBounded a where
   least :: a
@@ -65,8 +67,11 @@ class Lub a where
 
 instance Lub ()
 instance (Lub a, Lub b) => Lub (a, b)
+instance (Lub a, Lub b, Lub c) => Lub (a, b, c)
+instance (Lub a, Lub b, Lub c, Lub d) => Lub (a, b, c, d)
 instance (Lub a, Lub b) => Lub (Either a b)
 instance (Lub a) => Lub [a]
+instance (Lub a) => Lub (Maybe a)
 
 instance (Lub a) => Lub (M a) where
   lub None m = pure m
@@ -112,8 +117,8 @@ instance (Glb a, Glb b) => Glb (a, b) where
   glb (a, b) (a', b') = (glb a a', glb b b')
 
 instance (Glb' a) => Glb (M a) where
-  glb (NoneWith s) m = NoneWith s
-  glb m (NoneWith s) = NoneWith s
+  glb (NoneWith s) _ = NoneWith s
+  glb _ (NoneWith s) = NoneWith s
   glb (Some a) (Some a') =
     case glb' a a' of
       Ok r -> Some r
@@ -121,10 +126,13 @@ instance (Glb' a) => Glb (M a) where
 
 instance Glb' ()
 instance (Glb' a, Glb' b) => Glb' (a, b)
+instance (Glb' a, Glb' b, Glb' c) => Glb' (a, b, c)
+instance (Glb' a, Glb' b, Glb' c, Glb' d) => Glb' (a, b, c, d)
 instance (Glb' a, Glb' b) => Glb' (Either a b)
 instance (Glb' a) => Glb' [a]
+instance (Glb' a) => Glb' (Maybe a)
 
-newtype EqDisc a = EqDisc a deriving (Eq)
+newtype EqDisc a = EqDisc a deriving newtype (Eq)
 
 instance (Discrete a, Eq a) => Lub (EqDisc a) where
   lub a b = if a == b then pure a else err "lub: no lub for different elements in a disrete domain."
@@ -152,11 +160,14 @@ instance Discrete Bool
 instance Discrete Char
 instance (Discrete a, Discrete b) => Discrete (Either a b)
 instance (Discrete a, Discrete b) => Discrete (a, b)
+instance (Discrete a, Discrete b, Discrete c) => Discrete (a, b, c)
+instance (Discrete a, Discrete b, Discrete c, Discrete d) => Discrete (a, b, c, d)
 instance (Discrete a) => Discrete [a]
+instance (Discrete a) => Discrete (Maybe a)
 instance (Discrete k, Discrete v) => Discrete (M.Map k v)
 
 -- Another name of Maybe
-data M a = NoneWith [String] | Some a deriving (Show, Eq, Functor)
+data M a = NoneWith [String] | Some a deriving stock (Show, Eq, Functor)
 
 pattern None :: M a
 pattern None <- NoneWith _
