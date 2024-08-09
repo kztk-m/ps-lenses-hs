@@ -13,13 +13,32 @@ extra-doc-files:    CHANGELOG.md
 -- extra-source-files:
 
 common warnings
-    ghc-options: -Wall
+    ghc-options: 
+        -Wall
+        -Wcompat
+        -Widentities
+        -Wincomplete-uni-patterns
+        -Wincomplete-record-updates
+        -Wredundant-constraints
+        -Wnoncanonical-monad-instances
+
+    if impl(ghc >= 8.2)
+      ghc-options:       -fhide-source-paths
+    if impl(ghc >= 8.4)
+      ghc-options:       -Wmissing-export-lists
+                         -Wpartial-fields
+    if impl(ghc >= 8.8)
+      ghc-options:       -Wmissing-deriving-strategies
+                         -fwrite-ide-info
+                         -hiedir=.hie
+    if impl(ghc >= 8.10)
+      ghc-options:       -Wunused-packages
 
 library
     import:           warnings
-    exposed-modules:  MALens, Err, Domain
+    exposed-modules:  MALens, MALensTH, Err, Domain, SymmetricLens
     other-modules:    MALens.Examples.Snapshotting, MALens.Examples.Dup 
     -- other-extensions:
-    build-depends:    base ^>=4.17 || ^>=4.18, containers, mtl 
+    build-depends:    base ^>=4.17 || ^>=4.18, containers, mtl , template-haskell
     hs-source-dirs:   src
     default-language: Haskell2010
