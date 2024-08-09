@@ -1,23 +1,19 @@
-{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingVia #-}
-{-# HLINT ignore "Use tuple-section" #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{-# HLINT ignore "Use tuple-section" #-}
 
 module MALens where
 
-import Control.Applicative (liftA2)
 import Control.Category
 import Prelude hiding (id, (.))
 
-import Control.Monad (zipWithM)
-import Data.Map qualified as M
 import Debug.Trace (trace)
 import GHC.Stack (HasCallStack, callStack, getCallStack)
 
-import Control.Arrow qualified
 import Domain
 import Err
 

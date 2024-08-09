@@ -14,7 +14,7 @@ import MALens
 import Domain
 import Err
 
-import Data.Map qualified as M
+import qualified Data.Map as M
 import Data.Maybe (fromJust)
 
 -- Examples
