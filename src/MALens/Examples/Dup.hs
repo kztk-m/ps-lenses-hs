@@ -1,11 +1,13 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 
 module MALens.Examples.Dup where
 
 import Control.Category
+import Prelude hiding (id, (.))
+
 import Domain
 import MALens
-import Prelude hiding (id, (.))
 
 {-
 

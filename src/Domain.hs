@@ -5,7 +5,10 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
@@ -19,12 +22,28 @@ module Domain (
   Glb' (..),
   M (..),
   pattern None,
+
+  -- * Explicit Witness
+  WitGlb,
+  glbWith,
+  WitGlb',
+  glb'With,
+  WitLub,
+  lubWith,
+  witGlb,
+  witGlb',
+  witLub,
+  witLubD,
+  witLubM,
+  witGlbD,
+  witGlb'D,
 ) where
 
 import qualified Data.Map as M
 
 import Err
 
+import Data.Coerce (coerce)
 import qualified GHC.Generics as Gen
 
 class LowerBounded a where
@@ -135,14 +154,15 @@ instance (Glb' a) => Glb' (Maybe a)
 newtype EqDisc a = EqDisc a deriving newtype (Eq)
 
 instance (Discrete a, Eq a) => Lub (EqDisc a) where
-  lub a b = if a == b then pure a else err "lub: no lub for different elements in a disrete domain."
+  lub = coerce @(a -> a -> Err a) @(EqDisc a -> EqDisc a -> Err (EqDisc a)) (lubWith witLubD)
+
 deriving via EqDisc Int instance Lub Int
 deriving via EqDisc Double instance Lub Double
 deriving via EqDisc Bool instance Lub Bool
 deriving via EqDisc Char instance Lub Char
 
 instance (Discrete a, Eq a) => Glb' (EqDisc a) where
-  glb' a b = if a == b then pure a else err "glb': no glb for diffrent elements in a discrete domain."
+  glb' = coerce @(a -> a -> Err a) @(EqDisc a -> EqDisc a -> Err (EqDisc a)) (glb'With witGlb'D)
 
 deriving via EqDisc Int instance Glb' Int
 deriving via EqDisc Double instance Glb' Double
@@ -200,5 +220,59 @@ instance (LowerBounded a, LowerBounded b) => LowerBounded (a, b) where
   least = (least, least)
   leastWith s = (leastWith s, leastWith s)
 
+instance (LowerBounded a, LowerBounded b, LowerBounded c) => LowerBounded (a, b, c) where
+  least = (least, least, least)
+  leastWith s = (leastWith s, leastWith s, leastWith s)
+
 instance (CheckLeast a, CheckLeast b) => CheckLeast (a, b) where
   isLeast (a, b) = isLeast a && isLeast b
+
+instance (CheckLeast a, CheckLeast b, CheckLeast c) => CheckLeast (a, b, c) where
+  isLeast (a, b, c) = isLeast a && isLeast b && isLeast c
+
+{- |
+Explicit witness types, sometimes suitable for expresson
+subclass relations explicitly that Haskell does not handle well.
+-}
+newtype WitGlb a = WitGlb {glbWith :: a -> a -> a}
+
+newtype WitGlb' a = WitGlb' {glb'With :: a -> a -> Err a}
+
+newtype WitLub a = WitLub {lubWith :: a -> a -> Err a}
+
+witGlb :: (Glb a) => WitGlb a
+witGlb = WitGlb glb
+
+witLub :: (Lub a) => WitLub a
+witLub = WitLub lub
+
+witGlb' :: (Glb' a) => WitGlb' a
+witGlb' = WitGlb' glb'
+
+witGlbD :: (Eq a, Discrete a) => WitGlb (M a)
+witGlbD = WitGlb f
+  where
+    f (Some a) (Some b) | a == b = Some a
+    f _ _ = None
+
+witLubD :: (Eq a, Discrete a) => WitLub a
+witLubD = WitLub f
+  where
+    f :: (Eq a, Discrete a) => a -> a -> Err a
+    f a b
+      | a == b = pure a
+      | otherwise = err "no lub for different elements in a disrete domain."
+
+witLubM :: WitLub a -> WitLub (M a)
+witLubM w = WitLub f
+  where
+    f None m = pure m
+    f (Some a) None = pure $ Some a
+    f (Some a) (Some b) = Some <$> lubWith w a b
+
+witGlb'D :: (Eq a, Discrete a) => WitGlb' a
+witGlb'D = WitGlb' f
+  where
+    f a b
+      | a == b = pure a
+      | otherwise = err "no glb for different elements in a disrete domain."

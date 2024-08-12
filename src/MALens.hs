@@ -1,10 +1,10 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
+{-# HLINT ignore "Use tuple-section" #-}
+{-# OPTIONS_GHC -Wno-missing-export-lists #-}
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
-
-{-# HLINT ignore "Use tuple-section" #-}
 
 module MALens where
 
@@ -92,8 +92,14 @@ eraseUnspecL = MALens (const ()) (const $ const $ pure least)
 dup :: (Lub a) => MALens a (a, a)
 dup = MALens (\a -> (a, a)) (\_ ~(a1, a2) -> lub a1 a2)
 
+dupW :: WitLub a -> MALens a (a, a)
+dupW w = MALens (\a -> (a, a)) (\_ ~(a1, a2) -> lubWith w a1 a2)
+
 merge :: (Glb a) => MALens (a, a) a
 merge = MALens (\ ~(a1, a2) -> glb a1 a2) (\_ a -> pure (a, a))
+
+mergeW :: WitGlb a -> MALens (a, a) a
+mergeW w = MALens (\ ~(a1, a2) -> glbWith w a1 a2) (\_ a -> pure (a, a))
 
 -- >>> get (merge >>> dup) (Some 1 :: M Int, Some 1)
 -- >>> get (merge >>> dup) (Some 1 :: M Int, Some 2)
@@ -186,6 +192,18 @@ constL b = MALens g p
       | b' == b = pure a
       | otherwise = err "constL: update on constant"
 
+-- >>> get (assertEqL (1 :: Int)) (Some 1)
+-- >>> get (assertEqL (1 :: Int)) (Some 2)
+-- >>> get (assertEqL (1 :: Int)) None
+-- Some ()
+-- NoneWith ["assertEqL: update on constant"]
+-- NoneWith []
+
+-- >>> put (assertEqL (1 :: Int)) undefined None
+-- >>> put (assertEqL (1 :: Int)) undefined (Some ())
+-- Ok (NoneWith [])
+-- Ok (Some 1)
+
 assertEqL :: (Eq a) => a -> MALens (M a) (M ())
 assertEqL c = liftGalois $ Galois f g
   where
@@ -231,6 +249,19 @@ letM def l = MALens g p
     p s v
       | isLeast v = pure None
       | otherwise = Some <$> put l (case s of None -> def; Some a -> a) v
+
+-- A variant of letM whose put fails when the original source is missing.
+letM' :: (CheckLeast b) => MALens a b -> MALens (M a) b
+letM' l = MALens g p
+  where
+    g (Some a) = get l a
+    g (NoneWith s) = leastWith s
+
+    p s v
+      | isLeast v = pure None -- request by acceptability
+      | otherwise = case s of
+          NoneWith _ -> err "letM': source is missing"
+          Some a -> Some <$> put l a v
 
 -- >>> get (letMd undefined introMl) (Some $ Some "a")
 -- >>> get (letMd undefined introMl) (Some None)
@@ -282,7 +313,7 @@ snapshotM k = MALens g p
     p (Some ~(a, _)) (Some ~(b, c)) = do
       a' <- put (k c) a b
       pure $ Some (a', Some c)
-    p None (Some ~(b, c)) = err "Error: put snapshotM None (Some _)"
+    p None (Some ~(_, _)) = err "Error: put snapshotM None (Some _)"
 
 depLens :: (Discrete c) => MALens a c -> (c -> MALens d b) -> MALens (a, d) (c, b)
 depLens l k = first l >>> swapL >>> snapshot k >>> swapL

@@ -1,11 +1,15 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
-module Err where
+module Err (
+  Err (..),
+  err,
+) where
 
 import Control.Monad.Except (MonadError (..))
 
-data Err a = Err [String] | Ok a deriving (Show)
+data Err a = Err ![String] | Ok !a deriving stock (Show)
 
 err :: String -> Err a
 err s = Err [s]
