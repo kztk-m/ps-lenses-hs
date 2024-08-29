@@ -20,15 +20,15 @@ example =
         >>> fstL
     )
 
-mapList :: MALens (M a) b -> MALens [a] [b]
+mapList :: MALens (M a) b -> MALens [M a] [b]
 mapList l = MALens g p
   where
-    g = map (get l . Some)
+    g = map (get l)
 
     p _ [] = pure []
     p [] (y : ys) = do
       x' <- put l least y
       (x' :) <$> p [] ys
     p (x : xs) (y : ys) = do
-      x' <- put l (Some x) y
+      x' <- put l x y
       (x' :) <$> p xs ys
