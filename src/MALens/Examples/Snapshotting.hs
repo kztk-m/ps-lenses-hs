@@ -177,7 +177,7 @@ toContainer ::
   MALens (M [(k, a)]) (M (M.Map k a, [k]))
 toContainer =
   outListL
-    >>> cond nilCase r1 consCase r2 (null . snd)
+    >>> condD nilCase r1 consCase r2 (null . snd)
   where
     nilCase :: MALens () (M (M.Map k a, [k]))
     nilCase = introMd >>> dup >>> (emptyL *** nilL) >>> pairM
@@ -214,7 +214,7 @@ toContainer' ::
   MALens (M [(k, a)]) (M (M.Map k a, [k]))
 toContainer' =
   outListL
-    >>> cond nilCase r1 consCase r2 (null . snd)
+    >>> condD nilCase r1 consCase r2 (null . snd)
   where
     nilCase :: MALens () (M (M.Map k a, [k]))
     nilCase = introMd >>> dup >>> (emptyL *** nilL) >>> pairM
@@ -273,7 +273,7 @@ fromContainer =
         >>> pairM
         >>> dist
         >>> inspectL "1-cond"
-        >>> cond lCase lRec rCase rRec null
+        >>> condD lCase lRec rCase rRec null
     )
     >>> joinM
   where
@@ -300,7 +300,7 @@ fromContainer =
                 >>> swapL
                 >>> pairM
                 >>> dist
-                >>> cond br1 rec1 (br2 k) (rec2 k) (notElem k . map fst)
+                >>> condD br1 rec1 (br2 k) (rec2 k) (notElem k . map fst)
           )
         >>> inspectL "after-ss"
         >>> second introMd
@@ -357,7 +357,7 @@ fromContainer' =
         >>> pairM
         >>> dist
         >>> inspectL "1-cond"
-        >>> cond lCase lRec rCase rRec null
+        >>> condD lCase lRec rCase rRec null
     )
     >>> joinM
   where
@@ -386,7 +386,7 @@ fromContainer' =
                 >>> swapL
                 >>> pairM
                 >>> dist
-                >>> cond br1 rec1 (br2 k) (rec2 k) (notElem k . map fst)
+                >>> condD br1 rec1 (br2 k) (rec2 k) (notElem k . map fst)
           )
         >>> inspectL "after-ss"
         >>> liftMissing (second introMd) -- we don't want to give a default value for k
@@ -463,7 +463,7 @@ mapKeyBody def f =
     ( foldr
         ( \k l ->
             tryExtractL k
-              >>> cond
+              >>> condD
                 (introMd >>> l)
                 recon1
                 (first (introMd >>> f) >>> second (introMd >>> l) >>> pairM >>> insertL k)
@@ -484,7 +484,7 @@ testL :: (Ord k, Discrete k) => MALens (M (M.Map k (Int, String)), [k]) (M (M.Ma
 testL = mapKeyBody (0 :: Int, "") (liftMissing (second introMd >>> fstL))
 
 --- >>> get testL (None, ["Alice","Bob","Cecil"])
--- (None,["Alice","Bob","Cecil"])
+-- (NoneWith [],["Alice","Bob","Cecil"])
 
 --- >>> get testL (Some $ M.fromList [("Alice",(0,"Hey")), ("Bob",(1,"Bbb")), ("Cecil",(2,"Cxx"))], ["Alice","Bob","Cecil"])
 -- (Some (fromList [("Alice",0),("Bob",1),("Cecil",2)]),["Alice","Bob","Cecil"])
@@ -510,7 +510,7 @@ mapKeyBody' def f =
       ( foldr
           ( \k l ->
               tryExtractL k
-                >>> cond
+                >>> condD
                   (introMd >>> l)
                   recon1
                   (first (introMd >>> f) >>> second (introMd >>> l) >>> pairM >>> insertL k)

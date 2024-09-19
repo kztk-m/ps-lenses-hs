@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module MALens.Example.M where
+module MALens.Examples.M where
 
 import Control.Category
 import Prelude hiding (id, (.))

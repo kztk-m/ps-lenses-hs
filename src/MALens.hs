@@ -240,41 +240,31 @@ introMl = MALens Some $ \_ v -> case v of
 joinM :: (CheckLeast a) => MALens (M a) a
 joinM = letM least id
 
-letM :: (CheckLeast b) => a -> MALens a b -> MALens (M a) b
-letM def l = MALens g p
+letMWith ::
+  (CheckLeast b) =>
+  (b -> Err a)
+  -> MALens a b
+  -> MALens (M a) b
+letMWith adj l = MALens g p
   where
     g (Some a) = get l a
     g (NoneWith s) = leastWith s
 
     p s v
       | isLeast v = pure None
-      | otherwise = Some <$> put l (case s of None -> def; Some a -> a) v
+      | otherwise = do
+          a_adjusted <- case s of None -> adj v; Some a -> pure a
+          Some <$> put l a_adjusted v
+
+letM :: (CheckLeast b) => a -> MALens a b -> MALens (M a) b
+letM def = letMWith (const $ pure def)
 
 -- A variant of letM whose put fails when the original source is missing.
 letM' :: (CheckLeast b) => MALens a b -> MALens (M a) b
-letM' l = MALens g p
-  where
-    g (Some a) = get l a
-    g (NoneWith s) = leastWith s
+letM' = letMWith (const $ err "letM': source is missing")
 
-    p s v
-      | isLeast v = pure None -- request by acceptability
-      | otherwise = case s of
-          NoneWith _ -> err "letM': source is missing"
-          Some a -> Some <$> put l a v
-
--- >>> get (letMd undefined introMl) (Some $ Some "a")
--- >>> get (letMd undefined introMl) (Some None)
--- >>> get (letMd undefined introMl) None
--- Some (Some "a")
--- Some (NoneWith [])
--- NoneWith []
--- >>> put (letMd undefined introMl) undefined None
--- >>> put (letMd undefined introMl) undefined (Some None)
--- >>> put (letMd undefined introMl) undefined (Some $ Some "A")
--- Ok (NoneWith [])
--- Ok (Some (NoneWith []))
--- Ok (Some (Some "A"))
+bindMWith :: (t -> Err a) -> MALens a (M t) -> MALens (M a) (M t)
+bindMWith adj = letMWith (\v -> case v of None -> err "Cannot happen."; Some b -> adj b)
 
 -- A specialized version of sndL (recall that () is an instance of LowerBounded)
 -- Also, sndL can be defined via deleteUnit as:
@@ -318,36 +308,105 @@ snapshotM k = MALens g p
 depLens :: (Discrete c) => MALens a c -> (c -> MALens d b) -> MALens (a, d) (c, b)
 depLens l k = first l >>> swapL >>> snapshot k >>> swapL
 
-liftMissing :: (HasCallStack) => MALens a b -> MALens (M a) (M b)
-liftMissing l = MALens g p
+liftMWith :: (b -> Err a) -> MALens a b -> MALens (M a) (M b)
+liftMWith adj l = MALens g p
   where
     g (Some x) = Some (get l x)
     g (NoneWith s) = NoneWith s
 
     p _ None = pure None
-    p (Some s) (Some v) = Some <$> put l s v
-    p None (Some _) = err $ "put liftMissing: None (Some _)\n" ++ show (getCallStack callStack)
+    p s (Some v) = do
+      a_adjusted <- case s of None -> adj v; Some a -> pure a
+      Some <$> put l a_adjusted v
+
+liftMissing :: (HasCallStack) => MALens a b -> MALens (M a) (M b)
+liftMissing = liftMWith (const $ err $ "put liftMissing: None (Some _)\n" ++ show (getCallStack callStack))
 
 liftMissingDefault :: a -> MALens a b -> MALens (M a) (M b)
-liftMissingDefault a0 l = MALens g p
+liftMissingDefault a0 = liftMWith (const $ pure a0)
+
+newtype Monotone a b = EnsureMonotone {applyMonotone :: a -> b}
+
+monoFromDisc :: (Discrete a, Discrete b) => (a -> b) -> Monotone a b
+monoFromDisc = EnsureMonotone
+
+unTag :: Monotone a Bool -> MALens (M (Either a a)) (M a)
+unTag phi = MALens g p
   where
-    g (Some x) = Some (get l x)
+    g (Some (Left a)) = if applyMonotone phi a then Some a else NoneWith ["unTag: postcondition check failed (got False, expected True)"]
+    g (Some (Right b)) = if applyMonotone phi b then NoneWith ["unTag: postcondition check failed (got True, expected False)"] else Some b
     g (NoneWith s) = NoneWith s
 
     p _ None = pure None
-    p (Some s) (Some v) = Some <$> put l s v
-    p None (Some v) = Some <$> put l a0 v
+    p _ (Some v) =
+      pure $ Some $ if applyMonotone phi v then Left v else Right v
 
--- assertEqL :: (Eq a, Discrete a) => a -> MALens (M a) (M ())
--- assertEqL a0 = MALens g p
---   where
---     g (Some a) | a == a0 = Some ()
---     g _ = None
+unTagS :: MALens (Either a a) a
+unTagS = MALens g p
+  where
+    g = either id id
 
---     p _ (Some _) = pure (Some a0)
---     p _ None = pure None
+    p (Left _) = pure . Left
+    p (Right _) = pure . Right
+
+sumM :: MALens (Either (M a) (M b)) (M (Either a b))
+sumM = MALens g p
+  where
+    g (Left None) = None
+    g (Left (Some a)) = Some (Left a)
+    g (Right None) = None
+    g (Right (Some b)) = Some (Right b)
+
+    p _ (Some (Left a)) = pure $ Left $ Some a
+    p _ (Some (Right b)) = pure $ Right $ Some b
+    p s None = case s of
+      Left _ -> pure $ Left None
+      Right _ -> pure $ Right None
+
+mapSumL ::
+  MALens a c
+  -> MALens b d
+  -> (b -> c -> Err a)
+  -> (a -> d -> Err b)
+  -> MALens (Either a b) (Either c d)
+mapSumL l1 l2 r1 r2 = MALens g p
+  where
+    g (Left a) = Left $ get l1 a
+    g (Right b) = Right $ get l2 b
+
+    p (Left a) (Left c) = Left <$> put l1 a c
+    p (Left a) (Right d) = do
+      b <- r2 a d
+      Right <$> put l2 b d
+    p (Right b) (Left c) = do
+      a <- r1 b c
+      Left <$> put l1 a c
+    p (Right b) (Right d) = Right <$> put l2 b d
+
+scond :: MALens a c -> MALens b c -> MALens (Either a b) c
+scond l1 l2 = mapSumL l1 l2 r r >>> unTagS
+  where
+    r _ _ = err "scond: cannot switch branches."
 
 cond ::
+  MALens a (M c)
+  -> (Maybe b -> c -> Err a)
+  -> MALens b (M c)
+  -> (Maybe a -> c -> Err b)
+  -> Monotone c Bool
+  -> MALens (M (Either a b)) (M c)
+cond l1 r1 l2 r2 p = bindMWith adj (mapSumL l1 l2 r1' r2' >>> sumM) >>> unTag p
+  where
+    adj (Left c) = Left <$> r1 Nothing c
+    adj (Right c) = Right <$> r2 Nothing c
+
+    r1' _ None = err "cond: cannot determine branch" -- cannot happen, as bindMWith adj l bypasses l when the updated view is None
+    r1' b (Some c) = r1 (Just b) c
+
+    r2' _ None = err "cond: cannot determine branch" -- cannot happen (ditto)
+    r2' b (Some c) = r2 (Just b) c
+
+condD ::
   (Discrete c) =>
   MALens a (M c)
   -> (Maybe b -> c -> Err a)
@@ -355,29 +414,4 @@ cond ::
   -> (Maybe a -> c -> Err b)
   -> (c -> Bool)
   -> MALens (M (Either a b)) (M c)
-cond l1 r1 l2 r2 p = MALens getCond putCond
-  where
-    check phi (Some a) | phi a = Some a
-    check _ _ = None
-
-    getCond (Some (Left a)) =
-      check p (get l1 a)
-    getCond (Some (Right b)) =
-      check (not . p) (get l2 b)
-    getCond None = None
-    putCond _ None = pure None
-    putCond s (Some c)
-      | p c = do
-          src <- case s of
-            Some (Left a) -> pure a
-            Some (Right b) -> r1 (Just b) c
-            None -> r1 Nothing c
-          a' <- put l1 src (Some c)
-          pure (Some (Left a'))
-      | otherwise = do
-          src <- case s of
-            Some (Left a) -> r2 (Just a) c
-            Some (Right b) -> pure b
-            None -> r2 Nothing c
-          b' <- put l2 src (Some c)
-          pure (Some (Right b'))
+condD l1 r1 l2 r2 p = cond l1 r1 l2 r2 (monoFromDisc p)
