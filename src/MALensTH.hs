@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module MALensTH (arrP) where
+module MALensTH (arrP, arrPM) where
 
 import qualified Language.Haskell.TH as TH
 
@@ -37,6 +37,18 @@ arrP :: TH.Q TH.Exp -> TH.Q TH.Exp
 arrP me = do
   (p1, p2) <- extractPatAndBody =<< me
   [|MALens (\ $(asPat p1) -> $(asExp p2)) (const $ \ $(asPat p2) -> pure $(asExp p1))|]
+
+{- | M-version. For example, we have
+
+@
+>>> :t $(arrPM [| \(a , ()) -> a |])
+\$(arrPM [| \(a , ()) -> a |]) :: MALens (M (a, ())) (M a)
+@
+-}
+arrPM :: TH.Q TH.Exp -> TH.Q TH.Exp
+arrPM me = do
+  (p1, p2) <- extractPatAndBody =<< me
+  [|liftGalois $ Galois (\ $(asPat p2) -> pure $(asExp p1)) (\ $(asPat p1) -> pure $(asExp p2))|]
 
 extractPatAndBody :: TH.Exp -> TH.Q (SimplePat, SimplePat)
 extractPatAndBody (TH.LamE [p] e) = (,) <$> p2sp p <*> e2sp e
@@ -100,7 +112,7 @@ e2sp e | Just (cn, es) <- checkAppForm e = do
 e2sp e = fail $ "Unsupported expression: " ++ show (TH.ppr e)
 
 checkAppForm :: TH.Exp -> Maybe (TH.Name, [TH.Exp])
-checkAppForm (TH.VarE x) = pure (x, [])
+checkAppForm (TH.ConE x) = pure (x, [])
 checkAppForm (TH.AppE e1 e2) = do
   (n, args) <- checkAppForm e1
   pure (n, args ++ [e2])

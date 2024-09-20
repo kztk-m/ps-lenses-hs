@@ -2,7 +2,9 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module MALens.Examples.Snapshotting where
 
@@ -14,8 +16,12 @@ import MALens
 import Domain
 import Err
 
+import Data.Bits (Bits (..), (.&.))
+import qualified Data.Char
 import qualified Data.Map as M
 import Data.Maybe (fromJust)
+import Data.Word
+import MALensTH
 
 -- Examples
 
@@ -93,6 +99,171 @@ validateCheckSumM =
 -- Ok (Some (15,[1,2,3,4,5]))
 -- Ok (Some (15,[1,2,3,4,5]))
 -- Ok (Some (15,[1,2,3,4,5]))
+
+instance Discrete Word8
+
+assertByte :: Word8 -> MALens (M Word8) (M ())
+assertByte = assertEqL
+
+-- >>> get (assertEqL 2) (Some 2)
+-- >>> get (assertEqL 2) (Some 3)
+-- Some ()
+-- NoneWith ["assertEqL: update on constant"]
+-- >>> put (assertEqL 2) undefined None
+-- >>> put (assertEqL 2) undefined (Some ())
+-- Ok (NoneWith [])
+-- Ok (Some 2)
+
+-- >>> get (assertEqL 2 >>> joinM) (Some 2)
+-- >>> get (assertEqL 2 >>> joinM) (Some 3)
+-- ()
+-- ()
+-- >>> put (assertEqL 2 >>> joinM) undefined ()
+-- Ok (NoneWith [])
+
+-- >>> get (introMd >>> assertEqL 2) 2
+-- >>> get (introMd >>> assertEqL 2) 3
+-- Some ()
+-- NoneWith ["assertEqL: update on constant"]
+
+-- >>> put (introMd >>> assertEqL 2) 3 None
+-- >>> put (introMd >>> assertEqL 2) 3 (Some ())
+-- Ok 3.0
+-- Ok 2.0
+
+-- concrete hash is not important here
+hash :: (String, String, Int) -> (Word8, Word8)
+hash (s1, s2, n) =
+  let i = hashStr s1 `xor` hashStr s2 `xor` n
+      b1 = fromIntegral (i .&. 0xff) :: Word8
+      b2 = fromIntegral ((i .&. 0xff00) `shiftR` 8) :: Word8
+  in  (b1, b2)
+
+hashStr :: [Char] -> Int
+hashStr = foldr (\c -> xor (rotateL (Data.Char.ord c) 13)) 0
+
+removeH :: MALens ((Word8, Word8), (String, String, Int)) (M (String, String, Int))
+removeH =
+  snapshot
+    ( \x -> case hash x of
+        (b1, b2) -> ((introMd >>> assertByte b1) *** (introMd >>> assertByte b2)) >>> pairM >>> $(arrPM [|\((), ()) -> ()|])
+    )
+    >>> second introMd
+    >>> pairM
+    >>> $(arrPM [|\((), a) -> a|])
+
+-- >>> put removeH undefined (Some ("Brown", "CS", 90))
+-- Ok ((90,192),("Brown","CS",90))
+-- >>> get removeH ((90,192),("Brown","CS",90))
+-- Some ("Brown","CS",90)
+-- >>> get removeH ((220,16),("Brown","CS",90))
+-- NoneWith ["assertEqL: update on constant","assertEqL: update on constant"]
+
+-- >>> put removeH undefined (Some ("Brown", "CS", 880))
+-- Ok ((112,195),("Brown","CS",880))
+
+removeH' :: MALens ((Word8, Word8), (String, String, Int)) (M (String, String, Int))
+removeH' =
+  snapshot
+    ( \x -> case hash x of
+        (b1, b2) ->
+          first (introMd >>> assertByte b1)
+            >>> second introMd
+            >>> pairM
+            >>> deleteUnitM
+            >>> assertByte b2
+    )
+    >>> second introMd
+    >>> pairM
+    >>> $(arrPM [|\((), a) -> a|])
+
+-- >>> let pt = put (introMd >>> assertEqL (0 :: Int) >>> constLunit (0 :: Int))
+-- >>> pt 0 None
+-- >>> pt 0 (Some 2)
+-- >>> pt 0 (Some 0)
+-- Ok 0
+-- Err ["constLunit: update on constant"]
+-- Ok 0
+
+removeH'' :: (Eq b, Discrete s, Discrete b, Show b, Show s) => (s -> b) -> MALens (b, s) (M s)
+removeH'' h =
+  snapshot
+    ( \x ->
+        let bs = h x
+        in  introMd >>> assertEqL bs
+    )
+    >>> second introMd
+    >>> pairM
+    >>> liftMissing id
+    >>> $(arrPM [|\((), a) -> a|])
+
+-- introUnit
+--   >>> $(arrP [|\(u, (b, s)) -> ((u, s), b)|])
+--   >>> first (snapshot (\x -> constL (h x)))
+--   >>> $(arrP [|\((b1, s), b2) -> ((b1, b2), s)|])
+--   >>> first (snapshot (\b -> introMd >>> assertEqL b))
+--   >>> $(arrP [|\((u1, b2), s) -> ((b2, s), u1)|])
+--   >>> inspectL "H"
+--   >>> first (snapshot (\x -> introMd >>> assertEqL (h x)))
+--   >>> inspectL "HH"
+--   >>> $(arrP [|\((u2, s), u1) -> ((u1, u2), s)|])
+--   >>> (pairM *** introMd)
+--   >>> pairM
+--   >>> $(arrPM [|\(((), ()), s) -> s|])
+
+-- >>> get (removeH'' sum) (6, [1,2,3 :: Int])
+-- >>> get (removeH'' sum) (6, [1,2])
+-- Some [1,2,3]
+-- NoneWith ["assertEqL: update on constant"]
+
+-- >>> put (removeH'' sum) (6, [1,2,3]) (Some [1,2,3,4 :: Int])
+-- >>> put (removeH'' sum) (6, [1,2]) (Some [1,2,3,4 :: Int])
+-- Ok (10,[1,2,3,4])
+-- Err ["put liftMissing: None (Some _)\n[(\"liftMissing\",SrcLoc {srcLocPackage = \"malens-0.1.0.0-inplace\", srcLocModule = \"MALens.Examples.Snapshotting\", srcLocFile = \"/Users/kztk/work/lens_for_missing_values_hs/src/MALens/Examples/Snapshotting.hs\", srcLocStartLine = 197, srcLocStartCol = 9, srcLocEndLine = 197, srcLocEndCol = 20})]"]
+
+assertNilL :: MALens (M [a]) (M ())
+assertNilL = liftGalois $ Galois f g
+  where
+    f _ = pure []
+    g [] = pure ()
+    g _ = err "assertNilL: expect []"
+
+assertConsL :: MALens (M [a]) (M (a, [a]))
+assertConsL = liftGalois $ Galois f g
+  where
+    f (a, as) = pure (a : as)
+    g (a : as) = pure (a, as)
+    g _ = err "assertConsL: expect non-empty list"
+
+removeHList :: forall s. (Discrete s) => (s -> [Word8]) -> MALens ([Word8], s) (M s)
+removeHList h =
+  snapshot k
+    >>> second introMd
+    >>> pairM
+    >>> $(arrPM [|\((), a) -> a|])
+  where
+    k :: s -> MALens [Word8] (M ())
+    k s = introMd >>> go (h s)
+      where
+        go :: [Word8] -> MALens (M [Word8]) (M ())
+        go [] = assertNilL
+        go (b : bs) =
+          assertConsL
+            >>> letM (0, []) (((introMd >>> assertByte b) *** (introMd >>> go bs)) >>> pairM >>> $(arrPM [|\((), ()) -> ()|]))
+
+-- >>> get (removeHList id) ([1,2,3,4], [1,2,3,4])
+-- >>> get (removeHList id) ([1,2,3,4], [1,2,3,4,5])
+-- >>> get (removeHList id) ([1,2,3,4], [1,2,3])
+-- Some [1,2,3,4]
+-- NoneWith ["assertConsL: expect non-empty list"]
+-- NoneWith ["assertNilL: expect []"]
+
+-- >>> put (removeHList id) ([1,2,3], [1,2,3]) (Some [1,2,3,4])
+-- Ok ([1,2,3,4],[1,2,3,4])
+-- >>> put (removeHList id) ([1,2,3], [1,2,3]) (Some [1,2])
+-- Ok ([1,2],[1,2])
+-- >>> put (removeHList id) ([1,2,3], [11,2,3]) (Some [1,2])
+-- Ok ([1,2],[1,2])
 
 -- Check: v needs not to be discrete
 insertG ::
@@ -534,7 +705,66 @@ mapKeyBody' def f =
     recon1 Nothing _ = err "recon1: expects the source value"
     recon2 :: Maybe (M.Map k a) -> M.Map k b -> Err (a, M.Map k a)
     recon2 (Just m) _ = pure (def, m)
-    recon2 Nothing _ = err "recon2: expects the source value"
+    recon2 Nothing _ = pure (def, M.empty) -- err "recon2: expects the source value"
+
+mapKeyBody'' ::
+  forall k a b.
+  (Show k, Show a) =>
+  (Ord k, Discrete k, Discrete a, Discrete b) =>
+  a
+  -> MALens (M a) (M b)
+  -> MALens (M (M.Map k a, [k])) (M (M.Map k b, [k]))
+mapKeyBody'' def f =
+  letM (M.empty, []) $
+    snapshot
+      ( foldr
+          ( \k l ->
+              introMd
+                >>> tryExtractL k
+                >>> condD
+                  l
+                  recon1
+                  (first (introMd >>> f) >>> second l >>> pairM >>> insertL k)
+                  recon2
+                  (not . M.member k)
+          )
+          (introMd >>> emptyL . assertEmptyL)
+      )
+      >>> second introMd
+      >>> pairM
+  where
+    -- letM (M.empty, []) (introMd *** introMd) -- (introMinMfst M.empty >>> introMinMsnd [])
+    --   >>> introMl
+    --   >>> inspectL "mapKeyBody'"
+    --   >>> snapshotM
+    --     ( foldr
+    --         ( \k l ->
+    --             tryExtractL k
+    --               >>> condD
+    --                 (introMd >>> l)
+    --                 recon1
+    --                 (first (introMd >>> f) >>> second (introMd >>> l) >>> pairM >>> insertL k)
+    --                 recon2
+    --                 (not . M.member k)
+    --         )
+    --         (emptyL . assertEmptyL)
+    --     )
+    --   >>> letM (least, []) (second introMd >>> pairM)
+
+    -- >>> letM (least, []) (introMl *** introMd)
+    -- >>> first joinM
+    -- >>> pairM
+
+    -- >>> introMinMsnd []
+    -- >>> joinM
+    -- >>> pairM
+
+    recon1 :: Maybe (a, M.Map k a) -> M.Map k b -> Err (M.Map k a)
+    recon1 (Just (_, m)) _ = pure m
+    recon1 Nothing _ = err "recon1: expects the source value"
+    recon2 :: Maybe (M.Map k a) -> M.Map k b -> Err (a, M.Map k a)
+    recon2 (Just m) _ = pure (def, m)
+    recon2 Nothing _ = pure (def, M.empty) -- err "recon2: expects the source value"
 
 -- testL' :: (Ord k, Discrete k, SHo wk) => MALens (M (M.Map k (Int, String), [k])) (M (M.Map k Int, [k]))
 -- testL' = mapKeyBody' (0 :: Int, "") (liftMissing (second introM >>> fstL))
@@ -557,7 +787,8 @@ mapKey' ::
   -> MALens (M [(k, a)]) (M [(k, b)])
 mapKey' def f =
   toContainer'
-    >>> letM (M.empty, []) (introMd >>> mapKeyBody' def f)
+    >>> mapKeyBody'' def f
+    -- >>> letM (M.empty, []) (introMd >>> mapKeyBody' def f)
     >>> fromContainer'
 
 testMK :: (Ord k, Discrete k, Show k) => MALens (M [(k, (Int, String))]) (M [(k, Int)])

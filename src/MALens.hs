@@ -184,6 +184,15 @@ constLunit c = liftGalois $ Galois g f
       | x == c = pure ()
       | otherwise = err "constLunit: update on constant"
 
+constLns :: (Eq a, Discrete a) => a -> MALens (M ()) (M a)
+constLns c = MALens g p
+  where
+    g _ = pure c
+    p s (Some v)
+      | c == v = pure s
+      | otherwise = err "constLns: updated on constant"
+    p s None = pure s
+
 constL :: (Eq b, Discrete b, LowerBounded a) => b -> MALens a b
 constL b = MALens g p
   where

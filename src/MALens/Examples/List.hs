@@ -1,5 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
 
 module MALens.Examples.List where
 
@@ -105,3 +106,63 @@ example1 =
 -- Ok [("Alice","CS",60)]
 -- >>> put example1 [("Alice", "CS", 80)] (Some [("Alice",60), ("Bob", 90)])
 -- Ok [("Alice","CS",60),("Bob","",90)]
+
+pNameScoreUS :: MALens (String, String, M Int) (String, M Int)
+pNameScoreUS =
+  $(arrP [|\(a, b, c) -> (a, (b, c))|])
+    >>> second (first eraseL)
+    >>> $(arrP [|\(a, ((), c)) -> (a, c)|])
+
+nameScoresUS :: MALens [(String, String, M Int)] [(String, M Int)]
+nameScoresUS = mapL ("", "", least) pNameScoreUS
+
+multiViews :: MALens [(String, String, M Int)] ([(String, M Int)], [(String, M Int)])
+multiViews = dup >>> (nameScoresUS *** nameScoresUS)
+
+sWith :: (Int -> a) -> [(String, String, a)]
+sWith f = [("Brown", "CS", f 90), ("Smith", "Math", f 88), ("Johnson", "CS", f 65)]
+
+v2' :: [(String, M Int)]
+v2' = [("Brown", None), ("Smith", None), ("Johnson", Some 75)]
+
+v3' :: [(String, M Int)]
+v3' = [("Brown", Some 92), ("Smith", None), ("Johnson", None)]
+
+-- >>> put multiViews (sWith Some) (v2', v3')
+-- Ok [("Brown","CS",Some 92),("Smith","Math",NoneWith []),("Johnson","CS",Some 75)]
+
+multiViews' :: MALens [(String, String, Int)] ([(String, M Int)], [(String, M Int)])
+multiViews' = mapL ("", "", 0) f >>> multiViews
+  where
+    f =
+      $(arrP [|\(a, b, c) -> (a, (b, c))|])
+        >>> second (second introMd)
+        >>> $(arrP [|\(a, (b, c)) -> (a, b, c)|])
+
+-- >>> put multiViews' (sWith id) (v2', v3')
+-- Ok [("Brown","CS",92),("Smith","Math",88),("Johnson","CS",75)]
+
+-- The following is a slightly better version that doesn't require repeated
+-- specification of default values.
+
+pNameScoreUS' :: (LowerBounded b) => MALens (M a1, a2, b) (M (a1, b))
+pNameScoreUS' =
+  $(arrP [|\(a, b, c) -> (a, (b, c))|])
+    >>> second (first eraseL)
+    >>> $(arrP [|\(a, ((), c)) -> (a, c)|])
+    >>> second introMl
+    >>> pairM
+
+nameScoresUS' = mapL least pNameScoreUS' >>> sequenceL
+
+multiViews'' :: MALens [(String, String, Int)] (M ([(String, M Int)], [(String, M Int)]))
+multiViews'' =
+  mapL ("", "", 0) f >>> dup >>> (nameScoresUS' *** nameScoresUS') >>> pairM
+  where
+    f =
+      $(arrP [|\(a, b, c) -> (a, (b, c))|])
+        >>> (introMd *** (introMd *** introMd))
+        >>> $(arrP [|\(a, (b, c)) -> (a, b, c)|])
+
+-- >>> put multiViews'' (sWith id) (Some (v2', v3'))
+-- Ok [("Brown","CS",92),("Smith","Math",88),("Johnson","CS",75)]
