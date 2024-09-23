@@ -296,6 +296,9 @@ tryExtractG k = Galois f g
 insertL :: (Ord k, Discrete k) => k -> MALens (M (v, M.Map k v)) (M (M.Map k v))
 insertL k = liftGalois (invert $ insertG k)
 
+extractL :: (Ord k, Discrete k) => k -> MALens (M (M.Map k v)) (M (v, M.Map k v))
+extractL k = liftGalois (insertG k)
+
 tryExtractL ::
   (Discrete k, Ord k) =>
   k
@@ -710,7 +713,7 @@ mapKeyBody' def f =
 mapKeyBody'' ::
   forall k a b.
   (Show k, Show a) =>
-  (Ord k, Discrete k, Discrete a, Discrete b) =>
+  (Ord k, Discrete k, Discrete a) =>
   a
   -> MALens (M a) (M b)
   -> MALens (M (M.Map k a, [k])) (M (M.Map k b, [k]))
@@ -721,12 +724,12 @@ mapKeyBody'' def f =
           ( \k l ->
               introMd
                 >>> tryExtractL k
-                >>> condD
+                >>> cond
                   l
                   recon1
                   (first (introMd >>> f) >>> second l >>> pairM >>> insertL k)
                   recon2
-                  (not . M.member k)
+                  (EnsureMonotone $ not . M.member k)
           )
           (introMd >>> emptyL . assertEmptyL)
       )
@@ -760,14 +763,36 @@ mapKeyBody'' def f =
     -- >>> pairM
 
     recon1 :: Maybe (a, M.Map k a) -> M.Map k b -> Err (M.Map k a)
-    recon1 (Just (_, m)) _ = pure m
-    recon1 Nothing _ = err "recon1: expects the source value"
+    recon1 _ _ = err "Never called."
+    -- recon1 (Just (_, m)) _ = pure m
+    -- recon1 Nothing _ = err "recon1: expects the source value"
     recon2 :: Maybe (M.Map k a) -> M.Map k b -> Err (a, M.Map k a)
     recon2 (Just m) _ = pure (def, m)
     recon2 Nothing _ = pure (def, M.empty) -- err "recon2: expects the source value"
 
 -- testL' :: (Ord k, Discrete k, SHo wk) => MALens (M (M.Map k (Int, String), [k])) (M (M.Map k Int, [k]))
 -- testL' = mapKeyBody' (0 :: Int, "") (liftMissing (second introM >>> fstL))
+
+mapKeyBodyNoCase ::
+  forall k a b.
+  (Show k, Show a) =>
+  (Ord k, Discrete k, Discrete a) =>
+  a
+  -> MALens (M a) (M b)
+  -> MALens (M (M.Map k a, [k])) (M (M.Map k b, [k]))
+mapKeyBodyNoCase def f =
+  letM (M.empty, []) $
+    snapshot
+      ( foldr
+          ( \k l ->
+              introMd
+                >>> extractL k
+                >>> letM (def, M.empty) (((introMd >>> f) *** l) >>> pairM >>> insertL k)
+          )
+          (introMd >>> emptyL . assertEmptyL)
+      )
+      >>> second introMd
+      >>> pairM
 
 mapKey ::
   (Ord k, Discrete a, Discrete k, Discrete b, Show k, Show b) =>
