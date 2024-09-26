@@ -22,6 +22,7 @@ module Domain (
   Glb' (..),
   M (..),
   pattern None,
+  Templatable (..),
 
   -- * Explicit Witness
   WitGlb,
@@ -152,7 +153,6 @@ instance (Glb' a) => Glb' [a]
 instance (Glb' a) => Glb' (Maybe a)
 
 newtype EqDisc a = EqDisc a deriving newtype (Eq)
-
 instance (Discrete a, Eq a) => Lub (EqDisc a) where
   lub = coerce @(a -> a -> Err a) @(EqDisc a -> EqDisc a -> Err (EqDisc a)) (lubWith witLubD)
 
@@ -276,3 +276,53 @@ witGlb'D = WitGlb' f
     f a b
       | a == b = pure a
       | otherwise = err "no glb for different elements in a disrete domain."
+
+class GenTemplatable f where
+  gtemplate :: f a -> f a
+
+instance GenTemplatable Gen.V1 where
+  gtemplate x = case x of {}
+
+instance GenTemplatable Gen.U1 where
+  gtemplate Gen.U1 = Gen.U1
+
+instance (GenTemplatable f, GenTemplatable g) => GenTemplatable (f Gen.:*: g) where
+  gtemplate (a Gen.:*: b) = (gtemplate a Gen.:*: gtemplate b)
+
+instance (GenTemplatable f, GenTemplatable g) => GenTemplatable (f Gen.:+: g) where
+  gtemplate (Gen.L1 a) = Gen.L1 (gtemplate a)
+  gtemplate (Gen.R1 b) = Gen.R1 (gtemplate b)
+
+instance (Templatable c) => GenTemplatable (Gen.K1 i c) where
+  gtemplate (Gen.K1 c) = Gen.K1 $ template c
+
+instance (GenTemplatable f) => GenTemplatable (Gen.M1 i t f) where
+  gtemplate (Gen.M1 x) = Gen.M1 $ gtemplate x
+
+class Templatable a where
+  -- | @template a@ returns the smallest (in terms of absence) element that are comparable with @a@.
+  --
+  -- spec> template x ≦ y ==> template x ≦ template y
+  -- spec> x ≦ y ==> template y ≦ x
+  template :: a -> a
+  default template :: (Gen.Generic a, GenTemplatable (Gen.Rep a)) => a -> a
+  template = Gen.to . gtemplate . Gen.from
+
+instance Templatable Int where template = id
+instance Templatable Double where template = id
+instance Templatable Char where template = id
+instance Templatable Bool where template = id
+instance Templatable () where template = id
+instance (Templatable a) => Templatable (Maybe a) where template = fmap template
+instance (Templatable a) => Templatable [a] where template = fmap template
+
+instance (Templatable a, Templatable b) => Templatable (a, b)
+instance (Templatable a, Templatable b, Templatable c) => Templatable (a, b, c)
+instance (Templatable a, Templatable b, Templatable c, Templatable d) => Templatable (a, b, c, d)
+instance (Templatable a, Templatable b) => Templatable (Either a b)
+
+instance (Discrete k, Templatable a) => Templatable (M.Map k a) where
+  template = fmap template
+
+instance Templatable (M a) where
+  template _ = least

@@ -37,7 +37,7 @@ common warnings
 library
     import:           warnings
     exposed-modules:  MALens, MALensTH, Err, Domain, SymmetricLens
-    other-modules:    MALens.Examples.Snapshotting, MALens.Examples.Dup, MALens.Examples.M, MALens.Examples.List
+    other-modules:    MALens.Examples.Snapshotting, MALens.Examples.Dup, MALens.Examples.M, MALens.Examples.List, MALens.Examples.MapKeyT 
     -- other-extensions:
     build-depends:    base ^>=4.17 || ^>=4.18, containers, mtl , template-haskell
     hs-source-dirs:   src

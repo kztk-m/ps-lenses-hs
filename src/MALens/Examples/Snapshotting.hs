@@ -315,8 +315,21 @@ assertEmptyG = Galois f g
       | otherwise = err "checkEmptyG: expects the empty"
     g () = pure M.empty
 
-assertEmptyL :: (Discrete k, Discrete v) => MALens (M (M.Map k v)) (M ())
+assertEmptyL :: (Discrete k) => MALens (M (M.Map k v)) (M ())
 assertEmptyL = liftGalois (invert assertEmptyG)
+
+-- This is ok because
+-- (1) null check is monotone
+-- (2) M.empty is the smallest element for which null returns true
+assertEmptyL' :: (Discrete k) => MALens (M.Map k v) (M ())
+assertEmptyL' = MALens g p
+  where
+    g m
+      | M.null m = Some ()
+      | otherwise = None
+
+    p _ (Some _) = pure M.empty
+    p s None = pure s
 
 emptyL :: MALens (M ()) (M (M.Map k a))
 emptyL = liftGalois assertEmptyG
@@ -710,6 +723,29 @@ mapKeyBody' def f =
     recon2 (Just m) _ = pure (def, m)
     recon2 Nothing _ = pure (def, M.empty) -- err "recon2: expects the source value"
 
+mapKeyBody'N ::
+  forall k a b.
+  (Ord k, Discrete k, Discrete a) =>
+  a
+  -> MALens a (M b)
+  -> MALens (M.Map k a, [k]) (M (M.Map k b, [k]))
+mapKeyBody'N def f =
+  snapshot
+    ( foldr
+        ( \k l ->
+            introMd -- for this particular case, we could remove this
+              >>> tryExtractL k
+              >>> cond l (\_ _ -> err "XX") ((f *** l) >>> pairM >>> insertL k) recon2 (EnsureMonotone $ not . M.member k)
+        )
+        (assertEmptyL' >>> emptyL)
+    )
+    >>> second introMd
+    >>> pairM
+  where
+    recon2 :: Maybe (M.Map k a) -> M.Map k b -> Err (a, M.Map k a)
+    recon2 (Just m) _ = pure (def, m)
+    recon2 Nothing _ = pure (def, M.empty)
+
 mapKeyBody'' ::
   forall k a b.
   (Show k, Show a) =>
@@ -725,7 +761,7 @@ mapKeyBody'' def f =
               introMd
                 >>> tryExtractL k
                 >>> cond
-                  l
+                  undefined
                   recon1
                   (first (introMd >>> f) >>> second l >>> pairM >>> insertL k)
                   recon2
@@ -736,39 +772,11 @@ mapKeyBody'' def f =
       >>> second introMd
       >>> pairM
   where
-    -- letM (M.empty, []) (introMd *** introMd) -- (introMinMfst M.empty >>> introMinMsnd [])
-    --   >>> introMl
-    --   >>> inspectL "mapKeyBody'"
-    --   >>> snapshotM
-    --     ( foldr
-    --         ( \k l ->
-    --             tryExtractL k
-    --               >>> condD
-    --                 (introMd >>> l)
-    --                 recon1
-    --                 (first (introMd >>> f) >>> second (introMd >>> l) >>> pairM >>> insertL k)
-    --                 recon2
-    --                 (not . M.member k)
-    --         )
-    --         (emptyL . assertEmptyL)
-    --     )
-    --   >>> letM (least, []) (second introMd >>> pairM)
-
-    -- >>> letM (least, []) (introMl *** introMd)
-    -- >>> first joinM
-    -- >>> pairM
-
-    -- >>> introMinMsnd []
-    -- >>> joinM
-    -- >>> pairM
-
     recon1 :: Maybe (a, M.Map k a) -> M.Map k b -> Err (M.Map k a)
     recon1 _ _ = err "Never called."
-    -- recon1 (Just (_, m)) _ = pure m
-    -- recon1 Nothing _ = err "recon1: expects the source value"
     recon2 :: Maybe (M.Map k a) -> M.Map k b -> Err (a, M.Map k a)
     recon2 (Just m) _ = pure (def, m)
-    recon2 Nothing _ = pure (def, M.empty) -- err "recon2: expects the source value"
+    recon2 Nothing _ = err "recon2: expects the source value"
 
 -- testL' :: (Ord k, Discrete k, SHo wk) => MALens (M (M.Map k (Int, String), [k])) (M (M.Map k Int, [k]))
 -- testL' = mapKeyBody' (0 :: Int, "") (liftMissing (second introM >>> fstL))

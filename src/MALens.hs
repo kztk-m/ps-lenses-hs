@@ -1,5 +1,11 @@
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# HLINT ignore "Use tuple-section" #-}
 {-# OPTIONS_GHC -Wno-missing-export-lists #-}
@@ -14,6 +20,7 @@ import Prelude hiding (id, (.))
 import Debug.Trace (trace)
 import GHC.Stack (HasCallStack, callStack, getCallStack)
 
+import Data.Coerce (coerce)
 import Domain
 import Err
 
@@ -236,6 +243,11 @@ pairM = MALens g p
     p _ (Some ~(a, b)) = pure (Some a, Some b)
     p _ None = pure (None, None)
 
+introM :: (Templatable a) => MALens a (M a)
+introM = MALens Some $ \s v -> case v of
+  Some a -> pure a
+  None -> pure (template s)
+
 introMd :: (Discrete a) => MALens a (M a)
 introMd = MALens Some $ \s v -> case v of
   Some a -> pure a
@@ -295,6 +307,16 @@ snapshot k = MALens g p
     g ~(a, c) = (get (k c) a, c)
     p ~(a, _) ~(b, c) = do
       a' <- put (k c) a b
+      pure (a', c)
+
+newtype OrderInd a b = OrderInd {runOrderInd :: a -> b}
+
+snapshotO :: OrderInd c (MALens a b) -> MALens (a, c) (b, c)
+snapshotO k = MALens g p
+  where
+    g ~(a, c) = (get (runOrderInd k c) a, c)
+    p ~(a, _) ~(b, c) = do
+      a' <- put (runOrderInd k c) a b
       pure (a', c)
 
 snapshotM ::
