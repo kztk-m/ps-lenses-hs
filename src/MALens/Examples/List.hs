@@ -91,7 +91,7 @@ pNameScore =
     >>> fstL'
 
 pNameScoreM :: MALens (M (String, String, Int)) (M (String, Int))
-pNameScoreM = liftMissingDefault ("", "", 0) pNameScore
+pNameScoreM = letM ("", "", 0) (pNameScore >>> introM)
 
 example1 :: MALens [(String, String, Int)] (M [(String, Int)])
 example1 =
