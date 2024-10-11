@@ -228,13 +228,21 @@ assertEqL c = liftGalois $ Galois f g
       | x == c = pure ()
       | otherwise = err "assertEqL: update on constant"
 
+withInspect :: (Show a, Show b) => MALens a b -> String -> MALens a b
+withInspect l str =
+  MALens
+    (\s -> trace ("fwd" <> ss <> ": " <> show s) $ get l s)
+    (\s v -> trace ("bwd" <> ss <> ": " <> show s <> " | " <> show v) $ put l s v)
+  where
+    ss = if null str then "" else "[" ++ str ++ "]"
+
 inspectL :: (Show a) => String -> MALens a a
-inspectL s =
+inspectL st =
   MALens
     (\x -> trace ("fwd" <> ss <> ": " <> show x) x)
-    (const $ \x -> trace ("bwd" <> ss <> ": " <> show x) (pure x))
+    (\s v -> trace ("bwd" <> ss <> ": " <> show s <> " | " <> show v) (pure v))
   where
-    ss = if null s then "" else "[" ++ s ++ "]"
+    ss = if null st then "" else "[" ++ st ++ "]"
 
 pairM :: MALens (M a, M b) (M (a, b))
 pairM = MALens g p

@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module MALens.Examples.MapKeyT where
 
@@ -10,10 +11,15 @@ import Prelude hiding (id, (.))
 
 import MALens
 
+import qualified Data.List
 import qualified Data.Map as M
 import Data.Maybe (fromJust)
+import Debug.Trace (trace)
 import Domain
 import Err
+import GHC.Stack (HasCallStack, callStack, prettyCallStack)
+import MALens.Examples.List (mapL, sequenceL)
+import MALensTH (arrP)
 
 -- Check: v needs not to be discrete
 insertG ::
@@ -57,12 +63,12 @@ tryExtractL k = liftGalois (invert $ tryExtractG k)
 
 -- We don't need the constraint (Discrete k, Discrete a) here, as
 -- the empty map can no elements of type k or a---nothing can be missing.
-assertEmptyG :: Galois (M.Map k a) ()
+assertEmptyG :: (HasCallStack) => Galois (M.Map k a) ()
 assertEmptyG = Galois f g
   where
     f m
       | M.null m = pure ()
-      | otherwise = err "checkEmptyG: expects the empty"
+      | otherwise = err $ "checkEmptyG: expects the empty\n" ++ prettyCallStack callStack
     g () = pure M.empty
 
 assertEmptyL :: (Discrete k) => MALens (M (M.Map k v)) (M ())
@@ -110,7 +116,7 @@ nilL = leftL >>> inListL
 
 toContainer ::
   forall k a.
-  (Ord k, Discrete k, Templatable k, Templatable a) =>
+  (Ord k, Discrete k, Templatable k, Templatable a, Show k, Show a) =>
   MALens (M [(k, a)]) (M (M.Map k a, [k]))
 toContainer =
   outListL
@@ -145,6 +151,12 @@ toContainer =
       let res = [(kk, vv) | kk <- ks, let !vv = fromJust (M.lookup kk m)]
       in  pure (head res, tail res)
 
+-- >>> let s = (M.fromList [("a", 1), ("b",2)], ["a","b"])
+-- >>> get fromContainer (Some s)
+-- Some [("a",1.0),("b",2.0)]
+-- >>> put fromContainer (Some s) (Some [("b", 3)])
+-- Ok (Some (fromList [("a",1.0),("b",3.0)],["b"]))
+
 fromContainer ::
   forall k a.
   (Show k, Show a, Templatable a, Templatable k) =>
@@ -158,76 +170,97 @@ fromContainer =
         >>> swapL
         >>> pairM
         >>> dist
-        >>> inspectL "1-cond"
+        -- >>> inspectL "1-cond"
         >>> cond lCase lRec rCase rRec (EnsureMonotone null)
+        -- `withInspect` "fc-cond"
     )
     >>> joinM
   where
     lCase :: MALens ((), M.Map k a) (M [(k, a)])
-    lCase = introM *** (introM >>> assertEmptyL) >>> pairM >>> liftMissing deleteUnit >>> nilL
+    lCase =
+      introM *** (introM >>> assertEmptyL)
+        >>> pairM
+        >>> letM ((), ()) (deleteUnit >>> introM)
+        >>> nilL
 
     lRec :: Maybe ((k, [k]), M.Map k a) -> [(k, a)] -> Err ((), M.Map k a)
-    lRec (Just (_, m)) _ = pure ((), m)
-    lRec Nothing vs = pure ((), M.fromList vs)
+    lRec _ _ = trace "!!!lRec!!!" $ pure ((), M.empty)
+    -- lRec (Just (_, m)) _ = pure ((), m)
+    -- lRec Nothing vs = pure ((), M.fromList vs)
 
     rRec :: Maybe ((), M.Map k a) -> [(k, a)] -> Err ((k, [k]), M.Map k a)
-    rRec (Just (_, m)) ((k, _) : _) = pure ((k, []), m)
-    rRec _ vs@((k, _) : _) = pure ((k, []), M.fromList vs)
+    rRec _ vs@((k, _) : vs') = trace "!!!rRec!!!" $ pure ((k, map fst vs'), M.fromList vs)
+    -- rRec (Just (_, m)) ((k, _) : _) = pure ((k, []), m)
+    -- rRec _ vs@((k, _) : _) = pure ((k, []), M.fromList vs)
     -- rRec Nothing vs@((k, _) : _) = pure ((k, []), M.fromList vs)
     rRec _ _ = err "Cannot happen?"
 
     rCase :: MALens ((k, [k]), M.Map k a) (M [(k, a)])
     rCase =
-      assocToRightL
-        >>> swapL
+      $(arrP [|\((k, ks), m) -> ((ks, m), k)|])
         >>> snapshot
           ( \k ->
               (introM *** (introM >>> tryExtractL k))
                 >>> swapL
                 >>> pairM
                 >>> dist
-                >>> cond br1 rec1 (br2 k) (rec2 k) (EnsureMonotone $ notElem k . map fst)
+                -- Either (M.Map k a, [k]) ((a, M.Map k a), [k])
+                >>> cond
+                  br1
+                  (const $ const $ err "Cannot happen")
+                  (br2 k)
+                  (rec2 k)
+                  (EnsureMonotone $ notElem k . map fst)
+                  -- `withInspect` ("rCase-cond[" ++ show k ++ "]")
+                  -- M [(k,a)]
           )
-        >>> second (introM >>> introMl)
+        -- (M [(k, a)], k)
+        -- Goal: eliminate k using the fact that the first element of the list must have the form of (k,_)
+        >>> second (introM >>> introM)
         >>> swapL
         >>> pairM
-        >>> letM (least, []) (snapshotO (OrderInd $ \case [] -> constL () >>> introM; (k, _) : _ -> assertEqL k) >>> second introM >>> pairM)
-        >>> liftMissingDefault ((), []) deleteUnit
+        -- M (M k, [(k,a)])
+        >>> letM
+          (least, [])
+          ( snapshotO
+              ( OrderInd $ \case
+                  [] -> eraseL >>> introM
+                  ((k', _) : _) -> assertEqL k'
+              )
+              >>> second introM
+              >>> pairM
+          )
+        >>> letM ((), []) (deleteUnit >>> introM)
       where
-        -- >>> second introM
-        -- >>> swapL
-        -- >>> pairM
-        -- >>> liftMissing (snapshot (\xs -> introM >>> assertEqL (fst $ head xs)) >>> second introM >>> pairM)
-        -- >>> joinM
-        -- >>> liftMissingDefault ((), []) deleteUnit
-
         br1 :: MALens (M.Map k a, [k]) (M [(k, a)])
-        br1 = inspectL "br1" >>> introM >>> fromContainer
-
-        rec1 :: Maybe ((a, M.Map k a), [k]) -> [(k, a)] -> Err (M.Map k a, [k])
-        rec1 _ v = pure (M.fromList v, map fst v)
+        br1 =
+          inspectL "br1"
+            -- >>> introM >>> fromContainer
+            >>> eraseL
+            >>> introM
+            >>> nilL
 
         br2 :: k -> MALens ((a, M.Map k a), [k]) (M [(k, a)])
         br2 k =
-          assocToRightL
-            >>> (introM *** (introM >>> fromContainer))
-            >>> introUnit
-            >>> first (introM >>> constL k >>> introMd)
-            >>> assocToLeftL
-            >>> first pairM
+          $(arrP [|\((a, m), ks) -> (a, (m, ks))|])
+            >>> second (introM >>> fromContainer)
+            >>> first (introUnit >>> (introM >>> constLunit k) *** introM >>> pairM)
             >>> pairM
             >>> consL
 
         rec2 :: k -> Maybe (M.Map k a, [k]) -> [(k, a)] -> Err ((a, M.Map k a), [k])
-        rec2 k _ v = pure ((fromJust (Prelude.lookup k v), M.delete k (M.fromList v)), map fst v)
+        rec2 k _ v = trace "!!!rec2!!!" $ pure ((fromJust $ M.lookup k m, m'), Data.List.delete k $ map fst v)
+          where
+            m' = M.delete k m
+            m = M.fromList v
 
-mapKeyBody'' ::
+mapKeyBody ::
   forall k a b.
-  (Ord k, Discrete k, Templatable a) =>
+  (Ord k, Discrete k, Templatable a, Templatable b, Show k, Show b) =>
   a
-  -> MALens (M a) (M b)
+  -> MALens a b
   -> MALens (M (M.Map k a, [k])) (M (M.Map k b, [k]))
-mapKeyBody'' def f =
+mapKeyBody def f =
   letM (M.empty, []) $
     snapshot
       ( foldr
@@ -237,11 +270,11 @@ mapKeyBody'' def f =
                 >>> cond
                   undefined
                   recon1
-                  (first (introM >>> f) >>> second l >>> pairM >>> insertL k)
+                  (first (f >>> introM) >>> second l >>> pairM >>> insertL k)
                   recon2
                   (EnsureMonotone $ not . M.member k)
           )
-          (introM >>> emptyL . assertEmptyL)
+          (introM >>> assertEmptyL >>> emptyL)
       )
       >>> second introMd
       >>> pairM
@@ -253,23 +286,29 @@ mapKeyBody'' def f =
     recon2 Nothing _ = err "recon2: expects the source value"
 
 mapKey ::
-  (Ord k, Discrete k, Templatable k, Templatable a, Templatable b, Show k, Show b) =>
+  (Ord k, Discrete k, Templatable k, Templatable a, Templatable b, Show k, Show b, Show a) =>
   a
-  -> MALens (M a) (M b)
+  -> MALens a b
   -> MALens (M [(k, a)]) (M [(k, b)])
 mapKey def f =
   toContainer
-    >>> mapKeyBody'' def f
+    >>> mapKeyBody def f
     >>> fromContainer
 
-testMK :: (Ord k, Discrete k, Show k, Templatable k) => MALens (M [(k, (Int, String))]) (M [(k, Int)])
-testMK = mapKey (0 :: Int, "") (liftMissing (second introMd >>> fstL))
+nameScoresKey :: MALens [(String, String, Int)] (M [(String, Int)])
+nameScoresKey =
+  mapL ("", "", 0) $(arrP [|\(x, y, z) -> (x, (y, z))|])
+    >>> introM
+    >>> mapKey ("", 0) sndL'
 
--- >>> get testMK (Some [("Alice",(0,"Hey")), ("Bob",(1,"Bbb")), ("Cecil",(2,"Cxx"))])
--- Some [("Alice",0),("Bob",1),("Cecil",2)]
-
--- >>> put testMK (Some [("Alice",(0,"Hey")), ("Bob",(1,"Bbb")), ("Cecil",(2,"Cxx"))]) (Some [("Bob",1),("David",2),("Alice",99)])
--- Ok (Some [("Bob",(1,"Bbb")),("David",(2,"")),("Alice",(99,"Hey"))])
-
--- >>> put testMK None (Some [("Bob",1),("David",2),("Alice",99)])
--- Ok (Some [("Bob",(1,"")),("David",(2,"")),("Alice",(99,""))])
+-- >>> let s = [("Brown", "CS", 90), ("Smith", "Math", 88), ("Johnson", "CS", 65)]
+-- >>> get nameScoresKey s
+-- >>> put nameScoresKey s (Some [("Smith", 88), ("Brown", 90)])
+-- >>> put nameScoresKey s (Some [("Smith", 80), ("Brown", 99)])
+-- >>> put nameScoresKey s (Some [("Johnson", 80), ("Brown", 99)])
+-- >>> put nameScoresKey s (Some [("Johnson", 80), ("Brown", 99), ("Willson", 85)])
+-- Some [("Brown",90),("Smith",88),("Johnson",65)]
+-- Ok [("Smith","Math",88),("Brown","CS",90)]
+-- Ok [("Smith","Math",80),("Brown","CS",99)]
+-- Ok [("Johnson","CS",80),("Brown","CS",99)]
+-- Ok [("Johnson","CS",80),("Brown","CS",99),("Willson","",85)]
