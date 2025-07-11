@@ -254,3 +254,41 @@ dDTp = PartialTasks $ PTasks (Tasks IM.empty) d [] (IM.fromList [(2, 3), (3, 3)]
 
 -- >>> put lTasks originalTasks (dOGc, dDTp)
 -- Ok (Tasks {getTasks = fromList [(2,(True,"Walk dog",3))]})
+
+-- data CompletionAction = CAComplete | CANoop
+
+-- extractC :: ID -> PSLens DT CompletionAction
+-- extractC k = PSLens get' put'
+--   where
+--     get' (ProperTasks (Tasks t)) =
+--       case IM.lookup k t of
+--         Nothing ->
+--           -- as a completion can be implemented by a deletion, we regard that here that completion action has been executed
+--           pure CAComplete
+--         Just (b, _, _) ->
+--           if b
+--             then pure CAComplete -- cannot happen, when it used after filterOG
+--             else pure CANoop
+--     get' (PartialTasks (PTasks _ _ c _)) =
+--       -- In partially-specified states, completion is distinguished from other update requests
+--       if k `elem` c
+--         then pure CAComplete
+--         else pure CANoop
+
+--     put' _ CANoop = pure least
+--     put' _ CAComplete = pure $ PartialTasks $ PTasks (Tasks IM.empty) [] [k] IM.empty
+
+-- -- Let's check it's well-behavedness of `extractC`.
+-- --
+-- -- Suppose that get s = v and v' <= v. We will show put s v' <= s. We safely
+-- -- assume v' = v by the monotonicity of put in the second argument.
+-- --
+-- --   * Case: v is CANoop. Obvious.
+-- --   * Case: v is CAComplete: we need to check that get s = CACompele must imply
+-- --     put s v <= s. This in fact holds.
+-- --
+-- -- Suppose that put s v = s' and s' <= s''. We will show v <= get s'. We safely
+-- -- assume s'' = s' by the monotonicity of get.
+-- --
+-- --   * Case: v is CANoop. Then, s' = least and the componenets of s' is all empty. Thus, get s' = CANoop.
+-- --   * Case: v is CAComplete. This time, we also have get s' = CANoop.
