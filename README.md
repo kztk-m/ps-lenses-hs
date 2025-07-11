@@ -34,7 +34,7 @@ ghci> put (constL 42) (Some 3) 41
 Err ["constL: non identical update on a constant."]
 ```
 
-More examples are available in `src/PSLens/Examples`. For example, `src/PSLens/Examples/Tasks.hs` contains the task list example discussed Sections 2 and 4 in the paper.
+More examples are available in `src/PSLens/Examples/Tasks.hs`, which implements the task list example discussed Sections 2 and 4 in the paper.
 
 ```haskell
 ghci> :load PSLens.Examples.Tasks
