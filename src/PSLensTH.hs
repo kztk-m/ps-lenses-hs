@@ -1,11 +1,11 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module MALensTH (arrP, arrPM) where
+module PSLensTH (arrP, arrPM) where
 
 import qualified Language.Haskell.TH as TH
 
 import Data.Maybe (isJust)
-import MALens
+import PSLens
 
 data SimplePat
   = SVarP TH.Name
@@ -36,13 +36,13 @@ TODO: use 'least' in put when a variable does not appear in p2.
 arrP :: TH.Q TH.Exp -> TH.Q TH.Exp
 arrP me = do
   (p1, p2) <- extractPatAndBody =<< me
-  [|MALens (\ $(asPat p1) -> $(asExp p2)) (const $ \ $(asPat p2) -> pure $(asExp p1))|]
+  [|PSLens (\ $(asPat p1) -> pure $(asExp p2)) (const $ \ $(asPat p2) -> pure $(asExp p1))|]
 
 {- | M-version. For example, we have
 
 @
 >>> :t $(arrPM [| \(a , ()) -> a |])
-\$(arrPM [| \(a , ()) -> a |]) :: MALens (M (a, ())) (M a)
+\$(arrPM [| \(a , ()) -> a |]) :: PSLens (M (a, ())) (M a)
 @
 -}
 arrPM :: TH.Q TH.Exp -> TH.Q TH.Exp
@@ -116,11 +116,11 @@ checkAppForm (TH.ConE x) = pure (x, [])
 checkAppForm (TH.AppE e1 e2) = do
   (n, args) <- checkAppForm e1
   pure (n, args ++ [e2])
-checkAppForm e = Nothing
+checkAppForm _ = Nothing
 
 -- arrP :: TH.Q TH.Pat -> TH.Q TH.Pat -> TH.Q TH.Exp
 -- arrP mp1 mp2 =
---   [|MALens (\ $(introTilde =<< mp1) -> $(p2e =<< mp2)) (const $ \ $(introTilde =<< mp2) -> pure $(p2e =<< mp2))|]
+--   [|PSLens (\ $(introTilde =<< mp1) -> $(p2e =<< mp2)) (const $ \ $(introTilde =<< mp2) -> pure $(p2e =<< mp2))|]
 
 -- p2e :: TH.Pat -> TH.Q TH.Exp
 -- p2e (TH.VarP x) = pure $ TH.VarE x

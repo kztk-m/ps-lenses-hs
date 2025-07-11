@@ -21,6 +21,7 @@ module Domain (
   Glb (..),
   Glb' (..),
   M (..),
+  POrd (..),
   pattern None,
   Templatable (..),
 
@@ -46,6 +47,41 @@ import Err
 
 import Data.Coerce (coerce)
 import qualified GHC.Generics as Gen
+
+-- Used when want to refer to specifiedness ordering in computation.
+class (Eq a) => POrd a where
+  (<=%) :: a -> a -> Bool
+  default (<=%) :: (Gen.Generic a, GPOrd (Gen.Rep a)) => a -> a -> Bool
+  x <=% y = genLE (Gen.from x) (Gen.from y)
+
+class GPOrd f where
+  genLE :: f a -> f a -> Bool
+
+instance GPOrd Gen.V1 where
+  genLE x y =
+    case x of {} `seq` case y of {}
+
+instance GPOrd Gen.U1 where
+  genLE _ _ = True
+
+instance (GPOrd a, GPOrd b) => GPOrd (a Gen.:*: b) where
+  genLE (x Gen.:*: y) (x' Gen.:*: y') = genLE x x' && genLE y y'
+
+instance (GPOrd a, GPOrd b) => GPOrd (a Gen.:+: b) where
+  genLE (Gen.L1 x) (Gen.L1 x') = genLE x x'
+  genLE (Gen.R1 x) (Gen.R1 x') = genLE x x'
+  genLE _ _ = False
+
+instance (GPOrd f) => GPOrd (Gen.M1 i t f) where
+  genLE (Gen.M1 c) (Gen.M1 c') = genLE c c'
+instance (POrd c) => GPOrd (Gen.K1 i c) where
+  genLE (Gen.K1 c) (Gen.K1 c') = c <=% c'
+
+instance POrd ()
+instance (POrd a, POrd b) => POrd (a, b)
+instance (POrd a, POrd b, POrd c) => POrd (a, b, c)
+instance (POrd a, POrd b) => POrd (Either a b)
+instance (POrd a) => POrd [a]
 
 class LowerBounded a where
   least :: a
@@ -169,9 +205,16 @@ deriving via EqDisc Double instance Glb' Double
 deriving via EqDisc Bool instance Glb' Bool
 deriving via EqDisc Char instance Glb' Char
 
-class Discrete a
+instance (Discrete a, Eq a) => POrd (EqDisc a) where
+  a <=% b = a == b
+
+deriving via EqDisc Int instance POrd Int
+deriving via EqDisc Double instance POrd Double
+deriving via EqDisc Bool instance POrd Bool
+deriving via EqDisc Char instance POrd Char
 
 -- no method, intentionally
+class Discrete a
 
 instance Discrete ()
 instance Discrete Int

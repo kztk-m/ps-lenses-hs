@@ -9,12 +9,39 @@ module SymmetricLens where
 import Control.Category
 import Data.Dynamic
 import Data.Maybe (fromJust)
-import Data.Typeable (Typeable)
 import Domain
 import Err
-import MALens
-import MALensTH
+import PSLens
+import PSLensTH
 import Prelude hiding (id, (.))
+
+liftGaloisM :: Galois b a -> PSLens (M a) (M b)
+liftGaloisM galois = PSLens g p
+  where
+    g (NoneWith s) = pure $ NoneWith s
+    g (Some y) = pure $
+      case rightAdjoint galois y of
+        Ok x -> Some x
+        Err s -> NoneWith s
+
+    p _ None = pure None
+    p _ (Some x) = Some <$> leftAdjoint galois x
+
+assertEqL :: (Eq a) => a -> PSLens (M a) (M ())
+assertEqL c = liftGaloisM $ Galois f g
+  where
+    f _ = pure c
+    g x
+      | x == c = pure ()
+      | otherwise = err "assertEqL: update on constant"
+
+deleteUnitM :: PSLens (M ((), b)) (M b)
+deleteUnitM = liftGaloisM $ Galois (\a -> pure ((), a)) (\(_, a) -> pure a)
+
+swapM :: PSLens (M (a, b)) (M (b, a))
+swapM = liftGaloisM $ Galois sw sw
+  where
+    sw ~(x, y) = pure (y, x)
 
 {- |
 A pair of lenses to mimic symmetric lens. The following additional
@@ -31,8 +58,8 @@ data LensPair a b where
     forall c a b.
     (Typeable c, Eq c) =>
     c
-    -> MALens ((M a, M b), c) (M a)
-    -> MALens ((M a, M b), c) (M b)
+    -> PSLens ((M a, M b), c) (M a)
+    -> PSLens ((M a, M b), c) (M b)
     -> LensPair a b
 
 data SymmetricLensComp c a b
@@ -47,7 +74,7 @@ data SymmetricLens a b = forall c. (Typeable c, Eq c) => ExC (SymmetricLensComp 
 idLensPair :: (Discrete a, Eq a) => LensPair a a
 idLensPair = MkPair () l l
   where
-    l :: (Discrete a, Eq a) => MALens ((M a, M a), ()) (M a)
+    l :: (Discrete a, Eq a) => PSLens ((M a, M a), ()) (M a)
     l = first (mergeW witGlbD) >>> fstL
 
 composeLensPair :: forall a1 a2 a3. (Typeable a2, Eq a2, Discrete a2) => LensPair a1 a2 -> LensPair a2 a3 -> LensPair a1 a3
@@ -58,15 +85,15 @@ composeLensPair (MkPair c0_ left12_ right12_) (MkPair d0_ left23_ right23_) = mk
       (Typeable c, Typeable d, Eq c, Eq d) =>
       c
       -> d
-      -> MALens ((M a1, M a2), c) (M a1)
-      -> MALens ((M a1, M a2), c) (M a2)
-      -> MALens ((M a2, M a3), d) (M a2)
-      -> MALens ((M a2, M a3), d) (M a3)
+      -> PSLens ((M a1, M a2), c) (M a1)
+      -> PSLens ((M a1, M a2), c) (M a2)
+      -> PSLens ((M a2, M a3), d) (M a2)
+      -> PSLens ((M a2, M a3), d) (M a3)
       -> LensPair a1 a3
     mkPair c0 d0 left12 right12 left23 right23 = MkPair @(M a2, (c, d)) (least, (c0, d0)) left right
       where
         rearr ::
-          MALens
+          PSLens
             ((M a1, M a3), (M a2, (c, d)))
             ( ((M a1, M a2), c)
             , ((M a2, M a3), d)
@@ -75,7 +102,7 @@ composeLensPair (MkPair c0_ left12_ right12_) (MkPair d0_ left23_ right23_) = mk
           second (first $ dupW (witLubM witLubD))
             >>> $(arrP [|\((a1, a3), ((a2, a2'), (c, d))) -> (((a1, a2), c), ((a2', a3), d))|])
 
-        left :: MALens ((M a1, M a3), (M a2, (c, d))) (M a1)
+        left :: PSLens ((M a1, M a3), (M a2, (c, d))) (M a1)
         left =
           rearr
             >>> second left23
@@ -83,7 +110,7 @@ composeLensPair (MkPair c0_ left12_ right12_) (MkPair d0_ left23_ right23_) = mk
             >>> first (second $ mergeW witGlbD)
             >>> left12
 
-        right :: MALens ((M a1, M a3), (M a2, (c, d))) (M a3)
+        right :: PSLens ((M a1, M a3), (M a2, (c, d))) (M a3)
         right =
           rearr
             >>> first right12
@@ -98,14 +125,14 @@ fromSymmetric :: (Eq a, Eq b) => SymmetricLens a b -> LensPair a b
 fromSymmetric (ExC (MkComp c0 putr_ putl_)) =
   MkPair c0 (mkLens putr_ putl_) (first swapL >>> mkLens putl_ putr_)
   where
-    mkLens pr pl = MALens g p
+    mkLens pr pl = PSLens g p
       where
         g ((Some a, Some b), c)
           | Ok (a', c') <- pl (b, c)
           , a == a'
           , c == c' =
-              Some a
-        g _ = NoneWith ["original source is not in a consistent state"]
+              pure $ Some a
+        g _ = pure $ NoneWith ["original source is not in a consistent state"]
         p (_, c) None = pure ((None, None), c)
         p (_, c) (Some a) = do
           (b, c') <- pr (a, c)
@@ -122,11 +149,13 @@ toSymmetric (MkPair c0 left right) = ExC $ MkComp c0 putr_ putl_
 
     putr_ (a', c) = do
       s' <- put left (least, c) (Some a')
-      pure (unSome $ get right s', snd s')
+      b' <- get right s'
+      pure (unSome b', snd s')
 
     putl_ (b', c) = do
       s' <- put right (least, c) (Some b')
-      pure (unSome $ get left s', snd s')
+      a' <- get left s'
+      pure (unSome a', snd s')
 
 toSymmetricD :: LensPair a b -> (Dynamic, (a, Dynamic) -> Err (b, Dynamic), (b, Dynamic) -> Err (a, Dynamic))
 toSymmetricD lp = case toSymmetric lp of
@@ -136,19 +165,19 @@ toSymmetricD lp = case toSymmetric lp of
     , \(mb, d) -> do (ma, c') <- pl (mb, fromJust $ fromDynamic d); pure (ma, toDyn c')
     )
 
-term :: (Eq a, Discrete a, Typeable a) => a -> LensPair a ()
+term :: (Eq a, Templatable a, Discrete a, Typeable a) => a -> LensPair a ()
 term a0 = MkPair a0 left right
   where
     -- careful definitions to fulfill the laws of LensPair
-    left :: (Eq a, Discrete a) => MALens ((M a, M ()), a) (M a)
+    left :: (Eq a, Templatable a, Discrete a) => PSLens ((M a, M ()), a) (M a)
     left =
       $(arrP [|\((ma, mt), a) -> ((ma, a), mt)|])
-        >>> first (second introMd >>> mergeW witGlbD)
+        >>> first (second introM >>> mergeW witGlbD)
         >>> pairM
         >>> swapM
         >>> deleteUnitM
 
-    right :: (Eq a, Discrete a) => MALens ((M a, M ()), a) (M ())
+    right :: (Eq a, Templatable a, Discrete a) => PSLens ((M a, M ()), a) (M ())
     right =
       $(arrP [|\((ma, mt), a) -> ((ma, a), mt)|])
         -- check whether the `c` is in the valid state
@@ -156,7 +185,7 @@ term a0 = MkPair a0 left right
         >>> $(arrP [|\((ma, a), mt) -> ((ma, mt), a)|])
         -- distribute (Some ()) in put
         >>> first (pairM >>> deleteUnitM)
-        >>> second introMd
+        >>> second introM
         >>> fstL
 
 -- >>> (c0, pr, pl) = toSymmetricD (term (1 :: Int))
@@ -190,7 +219,7 @@ term a0 = MkPair a0 left right
 -- idLensPair :: forall a. (Lub a, Glb' a, Typeable a) => LensPair a a
 -- idLensPair = MkPair l1 l2
 --   where
---     l1, l2 :: MALens ((M a, M a), ()) (M a)
+--     l1, l2 :: PSLens ((M a, M a), ()) (M a)
 --     l1 = $(arrP [|\((a, b), ()) -> (a, b)|]) >>> fstL
 --     l2 = $(arrP [|\((a, b), ()) -> (a, b)|]) >>> sndL
 
@@ -210,9 +239,9 @@ term a0 = MkPair a0 left right
 -- -- inject :: forall a b. (Glb' a, Glb' b, Typeable a, Typeable b, Lub a, Lub b) => LensPair a (Either a b)
 -- -- inject = MkPair @(M a, M b) l1 l2
 -- --   where
--- --     l1 :: MALens ((M a, M (Either a b)), (M a, M b)) (M a)
+-- --     l1 :: PSLens ((M a, M (Either a b)), (M a, M b)) (M a)
 -- --     l1 = _
--- --     l2 :: MALens ((M a, M (Either a b)), (M a, M b)) (M (Either a b))
+-- --     l2 :: PSLens ((M a, M (Either a b)), (M a, M b)) (M (Either a b))
 -- --     l2 = _
 
 -- composeLensPair :: forall a1 a2 a3. LensPair a1 a2 -> LensPair a2 a3 -> LensPair a1 a3
@@ -221,12 +250,12 @@ term a0 = MkPair a0 left right
 --   in  MkPair ll1 ll2
 --   where
 --     conv ::
---       MALens ((M a1, M a2), c) (M a1)
---       -> MALens ((M a1, M a2), c) (M a2)
---       -> MALens ((M a2, M a3), d) (M a2)
---       -> MALens ((M a2, M a3), d) (M a3)
---       -> ( MALens ((M a1, M a3), ((M a2, M a2), (c, d))) (M a1)
---          , MALens ((M a1, M a3), ((M a2, M a2), (c, d))) (M a3)
+--       PSLens ((M a1, M a2), c) (M a1)
+--       -> PSLens ((M a1, M a2), c) (M a2)
+--       -> PSLens ((M a2, M a3), d) (M a2)
+--       -> PSLens ((M a2, M a3), d) (M a3)
+--       -> ( PSLens ((M a1, M a3), ((M a2, M a2), (c, d))) (M a1)
+--          , PSLens ((M a1, M a3), ((M a2, M a2), (c, d))) (M a3)
 --          )
 --     conv l1 l2 l1' l2' = (ll1, ll2)
 --       where
@@ -259,5 +288,5 @@ term a0 = MkPair a0 left right
 -- fromSymmetric :: (Glb' a, Glb' b, Typeable a, Typeable b, Lub a, Lub b) => SymmetricLens (M a) (M b) -> LensPair a b
 -- fromSymmetric (ExC (MkComp pr pl)) = MkPair l1 l2
 --   where
---     l1 = MALens (\((a, _), _) -> a) (\((_, _), c) a' -> do (b', c') <- pr (a', c); pure ((a', b'), c'))
---     l2 = MALens (\((_, b), _) -> b) (\((_, _), c) b' -> do (a', c') <- pl (b', c); pure ((a', b'), c'))
+--     l1 = PSLens (\((a, _), _) -> a) (\((_, _), c) a' -> do (b', c') <- pr (a', c); pure ((a', b'), c'))
+--     l2 = PSLens (\((_, b), _) -> b) (\((_, _), c) b' -> do (a', c') <- pl (b', c); pure ((a', b'), c'))
