@@ -22,6 +22,7 @@ module Domain (
   Glb' (..),
   M (..),
   POrd (..),
+  CheckIdentical (..),
   pattern None,
   Templatable (..),
 
@@ -54,6 +55,12 @@ class (Eq a) => POrd a where
   default (<=%) :: (Gen.Generic a, GPOrd (Gen.Rep a)) => a -> a -> Bool
   x <=% y = genLE (Gen.from x) (Gen.from y)
 
+class (Eq a) => CheckIdentical a where
+  -- prop> identicalAt a b ===> a <=% b
+  identicalAt :: a -> a -> Bool
+  default identicalAt :: (Gen.Generic a, GCheckIdentical (Gen.Rep a)) => a -> a -> Bool
+  identicalAt x y = gIdenticalAt (Gen.from x) (Gen.from y)
+
 class GPOrd f where
   genLE :: f a -> f a -> Bool
 
@@ -81,7 +88,34 @@ instance POrd ()
 instance (POrd a, POrd b) => POrd (a, b)
 instance (POrd a, POrd b, POrd c) => POrd (a, b, c)
 instance (POrd a, POrd b) => POrd (Either a b)
-instance (POrd a) => POrd [a]
+
+class GCheckIdentical f where
+  gIdenticalAt :: f a -> f a -> Bool
+
+instance GCheckIdentical Gen.V1 where
+  gIdenticalAt x y =
+    case x of {} `seq` case y of {}
+
+instance GCheckIdentical Gen.U1 where
+  gIdenticalAt _ _ = True
+
+instance (GCheckIdentical a, GCheckIdentical b) => GCheckIdentical (a Gen.:*: b) where
+  gIdenticalAt (x Gen.:*: y) (x' Gen.:*: y') = gIdenticalAt x x' && gIdenticalAt y y'
+
+instance (GCheckIdentical a, GCheckIdentical b) => GCheckIdentical (a Gen.:+: b) where
+  gIdenticalAt (Gen.L1 x) (Gen.L1 x') = gIdenticalAt x x'
+  gIdenticalAt (Gen.R1 x) (Gen.R1 x') = gIdenticalAt x x'
+  gIdenticalAt _ _ = False
+
+instance (GCheckIdentical f) => GCheckIdentical (Gen.M1 i t f) where
+  gIdenticalAt (Gen.M1 c) (Gen.M1 c') = gIdenticalAt c c'
+instance (CheckIdentical c) => GCheckIdentical (Gen.K1 i c) where
+  gIdenticalAt (Gen.K1 c) (Gen.K1 c') = identicalAt c c'
+
+instance CheckIdentical ()
+instance (CheckIdentical a, CheckIdentical b) => CheckIdentical (a, b)
+instance (CheckIdentical a, CheckIdentical b, CheckIdentical c) => CheckIdentical (a, b, c)
+instance (CheckIdentical a, CheckIdentical b) => CheckIdentical (Either a b)
 
 class LowerBounded a where
   least :: a

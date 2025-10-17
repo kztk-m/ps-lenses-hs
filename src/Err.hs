@@ -5,6 +5,8 @@
 module Err (
   Err (..),
   err,
+  guardErr,
+  execErr,
 ) where
 
 import Control.Monad.Except (MonadError (..))
@@ -38,3 +40,11 @@ instance MonadError [String] Err where
 
 instance MonadFail Err where
   fail = err
+
+guardErr :: String -> Bool -> Err ()
+guardErr _ True = pure ()
+guardErr s False = err s
+
+execErr :: Err a -> IO a
+execErr (Ok a) = pure a
+execErr (Err s) = error $ unlines s

@@ -40,6 +40,10 @@ idL = PSLens pure (\_ b -> pure b)
 --   b <- Just $ case get l1 a of { Just res -> res ; Nothing -> undefined }
 --
 -- to make ps-lens unconditionally form a category, but we ignore this.
+--
+-- Or, we can use a bit different definition.
+--
+-- data PSLens a b = PSLens (a -> Err (b, b -> Err a))
 
 instance Category PSLens where
   id = idL
@@ -100,13 +104,13 @@ eraseL = PSLens (const $ pure ()) (\s _ -> pure s)
 eraseUnspecL :: (LowerBounded a) => PSLens a ()
 eraseUnspecL = PSLens (const $ pure ()) (const $ const $ pure least)
 
-constL :: (LowerBounded s, POrd a) => a -> PSLens s a
+constL :: (LowerBounded s, CheckIdentical a) => a -> PSLens s a
 constL a =
   PSLens
     { get = pure . const a
     , put = const $ \case
         v
-          | v <=% a -> pure least
+          | identicalAt v a -> pure least
           | otherwise -> err "constL: non identical update on a constant."
     }
 
@@ -207,26 +211,6 @@ joinM = PSLens g p
       | isLeast v = pure None
       | otherwise = pure $ Some v
 
--- letMWith ::
---   (CheckLeast b) =>
---   (b -> Err a)
---   -> PSLens a b
---   -> PSLens (M a) b
--- letMWith adj l = PSLens g p
---   where
---     g (Some a) = get l a
---     g (NoneWith s) = pure $ leastWith s
-
---     p s v
---       | isLeast v = pure None
---       | otherwise = do
---           a_adjusted <- case s of None -> adj v; Some a -> pure a
---           Some <$> put l a_adjusted v
-
--- letM :: (CheckLeast b) => a -> PSLens a b -> PSLens (M a) b
--- letM def =
--- letMWith (const $ pure def)
-
 letM' :: (CheckLeast a) => PSLens a b -> PSLens (M a) b
 letM' l = joinM >>> l
 
@@ -263,25 +247,6 @@ snapshotO k = PSLens g p
       a' <- put (runOrderInd k c) a b
       pure (a', c)
 
-snapshotM ::
-  (Discrete c) =>
-  (c -> PSLens a b)
-  -> PSLens (M (a, M c)) (M (b, c))
-snapshotM k = PSLens g p
-  where
-    g None = pure None
-    g (Some ~(a, y)) = case y of
-      None -> pure None
-      Some c -> do
-        b <- get (k c) a
-        pure $ Some (b, c)
-
-    p _ None = pure None
-    p (Some ~(a, _)) (Some ~(b, c)) = do
-      a' <- put (k c) a b
-      pure $ Some (a', Some c)
-    p None (Some ~(_, _)) = err "Error: put snapshotM None (Some _)"
-
 depLens :: (Discrete c) => PSLens a c -> (c -> PSLens d b) -> PSLens (a, d) (c, b)
 depLens l k = first l >>> swapL >>> snapshot k >>> swapL
 
@@ -290,16 +255,18 @@ newtype Monotone a b = EnsureMonotone {applyMonotone :: a -> b}
 monoFromDisc :: (Discrete a, Discrete b) => (a -> b) -> Monotone a b
 monoFromDisc = EnsureMonotone
 
-unTag :: Monotone a Bool -> PSLens (M (Either a a)) (M a)
+unTag :: Monotone a Bool -> PSLens (Either a a) a
 unTag phi = PSLens g p
   where
-    g (Some (Left a)) = pure $ if applyMonotone phi a then Some a else NoneWith ["unTag: postcondition check failed (got False, expected True)"]
-    g (Some (Right b)) = pure $ if applyMonotone phi b then NoneWith ["unTag: postcondition check failed (got True, expected False)"] else Some b
-    g (NoneWith s) = pure $ NoneWith s
-
-    p _ None = pure None
-    p _ (Some v) =
-      pure $ Some $ if applyMonotone phi v then Left v else Right v
+    g (Left a)
+      | applyMonotone phi a = pure a
+      | otherwise = err "Invariant check failed (got False, expected True)"
+    g (Right a)
+      | applyMonotone phi a = err "Invariant check failed (got True, expected False)"
+      | otherwise = pure a
+    p _ a
+      | applyMonotone phi a = pure (Left a)
+      | otherwise = pure (Right a)
 
 unTagS :: PSLens (Either a a) a
 unTagS = PSLens g p
@@ -348,46 +315,5 @@ scond l1 l2 = mapSumL l1 l2 r r >>> unTagS
   where
     r _ _ = err "scond: cannot switch branches."
 
-cond ::
-  PSLens a (M c)
-  -> (Maybe b -> c -> Err a)
-  -> PSLens b (M c)
-  -> (Maybe a -> c -> Err b)
-  -> Monotone c Bool
-  -> PSLens (M (Either a b)) (M c)
-cond l1 r1 l2 r2 p = bindMWith adj (mapSumL l1 l2 r1' r2' >>> sumM) >>> unTag p
-  where
-    adj (Left c) = Left <$> r1 Nothing c
-    adj (Right c) = Right <$> r2 Nothing c
-
-    r1' _ None = err "cond: cannot determine branch" -- cannot happen, as bindMWith adj l bypasses l when the updated view is None
-    r1' b (Some c) = r1 (Just b) c
-
-    r2' _ None = err "cond: cannot determine branch" -- cannot happen (ditto)
-    r2' b (Some c) = r2 (Just b) c
-
--- For `bindMWith adj l` to be well-behaved,
--- return values of adj must be in dom(get l).
-bindMWith ::
-  (b -> Err a)
-  -> PSLens a (M b)
-  -> PSLens (M a) (M b)
-bindMWith adj l = PSLens g p
-  where
-    g (Some a) = get l a
-    g (NoneWith s) = pure $ leastWith s
-
-    p _ None = pure None
-    p s (Some v) = do
-      a_adjusted <- case s of None -> adj v; Some a -> pure a
-      Some <$> put l a_adjusted (Some v)
-
-condD ::
-  (Discrete c) =>
-  PSLens a (M c)
-  -> (Maybe b -> c -> Err a)
-  -> PSLens b (M c)
-  -> (Maybe a -> c -> Err b)
-  -> (c -> Bool)
-  -> PSLens (M (Either a b)) (M c)
-condD l1 r1 l2 r2 p = cond l1 r1 l2 r2 (monoFromDisc p)
+cond :: PSLens a d -> (b -> d -> Err a) -> PSLens b d -> (a -> d -> Err b) -> Monotone d Bool -> PSLens (Either a b) d
+cond l1 r1 l2 r2 p = mapSumL l1 l2 r1 r2 >>> unTag p
