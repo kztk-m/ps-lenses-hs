@@ -315,11 +315,21 @@ dOGc = PartialTasks $ PTasks (Tasks IM.empty) d (COnGoing c) POnGoing
 -- >>> put lTasks originalTasks (dOGc, least)
 -- Ok (Tasks {getTasks = fromList [(2,(True,"Walk dog",0)),(3,(True,"Stretch",0))]})
 
-dDTp :: DT DueToday
-dDTp = PartialTasks $ PTasks (Tasks IM.empty) d CDueToday (PDueToday $ Tasks p)
+-- A conflicting update
+dDTpConflict :: DT DueToday
+dDTpConflict = PartialTasks $ PTasks (Tasks IM.empty) d CDueToday (PDueToday $ Tasks p)
   where
     d = [3] -- d = [(3, fromJust $ IM.lookup 3 $ getTasks originalTasks)]
     p = IM.map (\(c, n, _) -> (c, n, 3)) $ IM.restrictKeys (getTasks originalTasks) (IS.fromList [2, 3])
 
--- >>> put lTasks originalTasks (dOGc, dDTp)
--- Err ["Completing updates in addition requests"]
+-- >>> put lTasks originalTasks (dOGc, dDTpConflict)
+-- Err ["Competing updates in addition requests"]
+
+-- Another conflicting update
+dDTpConflictWithdOGc :: DT DueToday
+dDTpConflictWithdOGc = PartialTasks $ PTasks (Tasks IM.empty) d CDueToday (PDueToday $ Tasks $ IM.empty)
+  where
+    d = [3] -- d = [(3, fromJust $ IM.lookup 3 $ getTasks originalTasks)]
+
+-- >>> put lTasks originalTasks (dOGc, dDTpConflict2)
+-- Err ["Addition/deletion conflicts"]
