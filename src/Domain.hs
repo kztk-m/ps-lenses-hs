@@ -49,18 +49,24 @@ import Err
 import Data.Coerce (coerce)
 import qualified GHC.Generics as Gen
 
--- Used when want to refer to specifiedness ordering in computation.
+-- | 'POrd' is used when want to refer to specifiedness ordering in computation.
+-- We do not reuse the existing Ord type class, as they are often conflicting.
+-- For example, we have 1 <= 2 but they are both incomparable proper states in
+-- the usual sense.
 class (Eq a) => POrd a where
   (<=%) :: a -> a -> Bool
   default (<=%) :: (Gen.Generic a, GPOrd (Gen.Rep a)) => a -> a -> Bool
   x <=% y = genLE (Gen.from x) (Gen.from y)
 
+-- | Similarly to 'POrd', but 'CheckIdentical' provides 'identicalAt' to check
+-- the I relation in the paper.
 class (Eq a) => CheckIdentical a where
   -- prop> identicalAt a b ===> a <=% b
   identicalAt :: a -> a -> Bool
   default identicalAt :: (Gen.Generic a, GCheckIdentical (Gen.Rep a)) => a -> a -> Bool
   identicalAt x y = gIdenticalAt (Gen.from x) (Gen.from y)
 
+-- | A class prepared for generic |POrd| instances.
 class GPOrd f where
   genLE :: f a -> f a -> Bool
 
@@ -89,6 +95,7 @@ instance (POrd a, POrd b) => POrd (a, b)
 instance (POrd a, POrd b, POrd c) => POrd (a, b, c)
 instance (POrd a, POrd b) => POrd (Either a b)
 
+-- | A class prepared for generic 'CheckIdentical' instances.
 class GCheckIdentical f where
   gIdenticalAt :: f a -> f a -> Bool
 
@@ -117,15 +124,19 @@ instance (CheckIdentical a, CheckIdentical b) => CheckIdentical (a, b)
 instance (CheckIdentical a, CheckIdentical b, CheckIdentical c) => CheckIdentical (a, b, c)
 instance (CheckIdentical a, CheckIdentical b) => CheckIdentical (Either a b)
 
+-- | Lowerbounded i-posets (ordering is implicit in Haskell implementation)
 class LowerBounded a where
   least :: a
   least = leastWith []
   leastWith :: [String] -> a
   leastWith _ = least
 
+-- | A sub class of |LowerBound| with a method to check if a given element is
+-- the least element or not.
 class (LowerBounded a) => CheckLeast a where
   isLeast :: a -> Bool
 
+-- | A type class for generic instances of 'Lub'
 class GLub f where
   glub :: f a -> f a -> Err (f a)
 
@@ -150,6 +161,8 @@ instance (GLub f) => GLub (Gen.M1 i t f) where
 instance (Lub c) => GLub (Gen.K1 i c) where
   glub (Gen.K1 c) (Gen.K1 c') = Gen.K1 <$> lub c c'
 
+-- | Provides 'lub', which should implement the join operation soundly.
+-- This class corresponds to "Duplicable" in the paper.
 class Lub a where
   lub :: a -> a -> Err a
   default lub :: (Gen.Generic a, GLub (Gen.Rep a)) => a -> a -> Err a
@@ -168,10 +181,12 @@ instance (Lub a) => Lub (M a) where
   lub m None = pure m
   lub (Some a) (Some b) = Some <$> lub a b
 
+-- | A class provides 'glb', a dual of 'lub'.
 class Glb a where
   -- Unlike 'lub', we require glb as it is assumed to be used in get
   glb :: a -> a -> a
 
+-- | A class for generic instances of 'Glb''
 class GGlb' f where
   gglb' :: f a -> f a -> Err (f a)
 
@@ -196,6 +211,8 @@ instance (GGlb' f) => GGlb' (Gen.M1 i t f) where
 instance (Glb' c) => GGlb' (Gen.K1 i c) where
   gglb' (Gen.K1 c) (Gen.K1 c') = Gen.K1 <$> glb' c c'
 
+-- | A variant of 'Glb' that provides 'glb''. Unlike 'glb' in 'Glb', 'glb'' can
+-- be (observably) partial.
 class Glb' a where
   glb' :: a -> a -> Err a
   default glb' :: (Gen.Generic a, GGlb' (Gen.Rep a)) => a -> a -> Err a
@@ -222,7 +239,9 @@ instance (Glb' a, Glb' b) => Glb' (Either a b)
 instance (Glb' a) => Glb' [a]
 instance (Glb' a) => Glb' (Maybe a)
 
+-- | A newtype wrapper to be used with @DerivingVia@.
 newtype EqDisc a = EqDisc a deriving newtype (Eq)
+
 instance (Discrete a, Eq a) => Lub (EqDisc a) where
   lub = coerce @(a -> a -> Err a) @(EqDisc a -> EqDisc a -> Err (EqDisc a)) (lubWith witLubD)
 
@@ -247,7 +266,7 @@ deriving via EqDisc Double instance POrd Double
 deriving via EqDisc Bool instance POrd Bool
 deriving via EqDisc Char instance POrd Char
 
--- no method, intentionally
+-- A class to ensure @a@ is discrete. The class has no method intentionally.
 class Discrete a
 
 instance Discrete ()
@@ -263,7 +282,7 @@ instance (Discrete a) => Discrete [a]
 instance (Discrete a) => Discrete (Maybe a)
 instance (Discrete k, Discrete v) => Discrete (M.Map k v)
 
--- Another name of Maybe
+-- | Another name of Maybe, except we have @None <=% Some _@.
 data M a = NoneWith [String] | Some a deriving stock (Show, Eq, Functor)
 
 pattern None :: M a
@@ -307,10 +326,9 @@ instance (CheckLeast a, CheckLeast b) => CheckLeast (a, b) where
 instance (CheckLeast a, CheckLeast b, CheckLeast c) => CheckLeast (a, b, c) where
   isLeast (a, b, c) = isLeast a && isLeast b && isLeast c
 
-{- |
-Explicit witness types, sometimes suitable for expresson
-subclass relations explicitly that Haskell does not handle well.
--}
+-- |
+-- Explicit witness types, sometimes suitable for expresson
+-- subclass relations explicitly that Haskell does not handle well.
 newtype WitGlb a = WitGlb {glbWith :: a -> a -> a}
 
 newtype WitGlb' a = WitGlb' {glb'With :: a -> a -> Err a}
@@ -354,6 +372,7 @@ witGlb'D = WitGlb' f
       | a == b = pure a
       | otherwise = err "no glb for different elements in a disrete domain."
 
+-- | A typeclass for generic |Temptable| instances.
 class GenTemplatable f where
   gtemplate :: f a -> f a
 
@@ -376,11 +395,14 @@ instance (Templatable c) => GenTemplatable (Gen.K1 i c) where
 instance (GenTemplatable f) => GenTemplatable (Gen.M1 i t f) where
   gtemplate (Gen.M1 x) = Gen.M1 $ gtemplate x
 
+-- | 'Templable a' is a weaker version of 'LowerBounded', where we can pick the
+-- relative smallest element. (Not in the part of our ESOP 2026 paper)
 class Templatable a where
-  -- | @template a@ returns the smallest (in terms of absence) element that are comparable with @a@.
+  -- | @template a@ returns the smallest (in terms of specifiedness) element that are comparable with @a@.
   --
-  -- spec> template x ≦ y ==> template x ≦ template y
-  -- spec> x ≦ y ==> template y ≦ x
+  -- spec> template x <=% y ==> template x <=% template y
+  -- spec> x <=% y ==> template y <=% x
+  -- spec> identicalAt (template x) x
   template :: a -> a
   default template :: (Gen.Generic a, GenTemplatable (Gen.Rep a)) => a -> a
   template = Gen.to . gtemplate . Gen.from

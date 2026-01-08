@@ -1,19 +1,19 @@
-# Implementation of Partial-State Lenses
+# Prototype Implementation of Partial-State Lenses
 
-This code accompanies the paper "Lenses for Partially-Specified States".
+This code accompanies our ESOP 2026 paper "Lenses for Partially-Specified States".
 
 ## Prerequisites
 
 Ensure you have the following installed:
 
-* GHC (tested 9.6.5)
+* GHC (tested 9.6.5 and 9.14.1)
 * cabal (version 3.0 or later)
 
 These can be installed using [ghcup](https://www.haskell.org/ghcup/) or your distribution's package manager.
 
 ## Running the Code
 
-To test the provided functions, use `cabal repl` to start `ghci`
+To test the provided functions, use `cabal repl` to start `ghci`. (This implementation does not provide executables, and thus `cabal run` does not work.)
 
 ```console
 $ cabal repl 
@@ -55,9 +55,10 @@ ghci> printDTPair =<< execErr (get lTasks originalTasks)
 
 2  True   Walk dog  +0
 3  False  Jog       +0
+ghci> -- Example in Section 2.3
 ghci> dOG -- defined in PSLens.Examples.Tasks
 PartialTasks (PTasks {addReq = Tasks {getTasks = fromList [(4,(False,"Buy egg",0))]}, delReq = [], compReq = COnGoing (Tasks {getTasks = fromList []}), postReq = POnGoing})
-ghci> printDT dOG
+ghci> printDT dOG -- w_og in the paper 
 4  False  Buy egg  +0  (+)
 ghci> put lTasks originalTasks (dOG , least)
 Ok (Tasks {getTasks = fromList [(1,(False,"Buy milk",1)),(2,(True,"Walk dog",0)),(3,(False,"Jog",0)),(4,(False,"Buy egg",0))]})
@@ -66,14 +67,39 @@ ghci> printTasks =<< execErr (put lTasks originalTasks (dOG , least))
 2  True   Walk dog  +0
 3  False  Jog       +0
 4  False  Buy egg   +0
+ghci> printDT dDT -- w_dt in the paper 
+2                      (-)
+3  False  Stretch  +0  (+)
+ghci> printTasks =<< execErr (put lTasks originalTasks (dOG , dDT)) -- s''_tl in the paper
+1  False  Buy milk  +1
+3  False  Stretch   +0
+4  False  Buy egg   +0
+ghci> printDTPair =<< execErr (get lTasks =<< put lTasks originalTasks (dOG , dDT)) -- v''_og and v''_dt in the paper
+1  False  Buy milk  +1
+3  False  Stretch   +0
+4  False  Buy egg   +0
+
+3  False  Stretch  +0
+4  False  Buy egg  +0
+ghci> -- Example in Section 2.4
+ghci> printDT dOGc -- Fig. 3 in the paper 
+1                 (-)
+3  True  Jog  +0  (C)
+ghci> printTasks =<< execErr (put lTasks originalTasks (dOGc, least))
+2  True  Walk dog  +0
+3  True  Jog       +0
 ```
 
-### File Overview
+## File Overview
 
 The project files are structured as follows:
 
 * `src/Domain.hs` Type classes for poset structures.
 * `src/Err.hs` A monad for error reporting.
-* `src/PSLens.hs` The main definition of partial-state lenses and their combinators.
-* `src/PSLensTH.hs` Template Haskell to simplify pair manipulation.
-* `src/PSLens/Examples/Tasks.hs` Tasks list examples (Section 2 and 4)
+* `src/PSLens.hs` The main definition of partial-state lenses and their combinators, including those not mentioned in our paper.
+* `src/PSLensTH.hs` Template Haskell to simplify pair manipulation (not mentioned in the paper).
+* `src/PSLens/Examples/Tasks.hs` Tasks list examples (Sections 2 and 4)
+
+## Notable Differences from the Paper
+
+The code `src/PSLens/Examples/Tasks.hs` only implemented the elaborated version discussed in Section 4.5. One can mimic the behavior of the non-elaborated version by setting completion/postponing requests empty. For simplicity, we simply use `Int` for due dates.

@@ -7,7 +7,7 @@ import-export-style: diff-friendly
 indent-wheres: true
 record-brace-space: false
 newlines-between-decls: 1
-haddock-style: multi-line
+haddock-style: single-line
 haddock-style-module: null
 let-style: auto
 in-style: left-align

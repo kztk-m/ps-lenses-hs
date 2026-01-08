@@ -48,14 +48,19 @@ printTasks (Tasks m) =
 
     fillSp s n = take n $ s ++ replicate n ' '
 
+-- | Since we do not want to provide separate implementations for DT/DT_OG/DT_DT,
+-- we use the following type parameter corresponds to the three i-posets.
 data P = N | OnGoing | DueToday
 
+-- | The C part in the paper for DT/DT_OG/DT_DT
 data CompReq (a :: P) where
   CN :: CompReq N
   COnGoing :: Tasks -> CompReq OnGoing
   CDueToday :: CompReq DueToday
+
 deriving stock instance Show (CompReq a)
 
+-- | The P part in the paper for DT/DT_OG/DT_DT
 data PostReq (a :: P) where
   PN :: PostReq N
   POnGoing :: PostReq OnGoing
@@ -63,6 +68,7 @@ data PostReq (a :: P) where
 
 deriving stock instance Show (PostReq a)
 
+-- | Strictly partially-specified states for Tasks.
 data PTasks a = PTasks
   { addReq :: Tasks
   , delReq :: [ID]
@@ -105,6 +111,11 @@ printPTasks (PTasks aa dd cc pp) = do
 
     fillSp s n = take n $ s ++ replicate n ' '
 
+-- | A bundled definition of DT/DT_OG/DT_DT.
+--
+-- * DT N corresponds to DT in the paper
+-- * DT OnGoing corresponds to DT_OG in the paper
+-- * DT DueToday corresponds to DT_DT in the paper
 data DT a = ProperTasks Tasks | PartialTasks (PTasks a)
   deriving stock Show
 
@@ -228,6 +239,9 @@ allDueToday = IM.foldr ((&&) . isDueToday) True . getTasks
 allDueLater :: Tasks -> Bool
 allDueLater = IM.foldr ((&&) . not . isDueToday) True . getTasks
 
+-- We only provide elaborated versions. To mimic the non-elaborated behavior, just set
+-- the completion requests empty.
+
 filterOG :: PSLens (DT N) (DT OnGoing)
 filterOG = PSLens g pt
   where
@@ -280,6 +294,8 @@ originalTasks =
       , (3, (False, "Jog", 0))
       ]
 
+-- Several test cases.
+
 -- >>> get lTasks originalTasks
 -- Ok (ProperTasks (Tasks {getTasks = fromList [(1,(False,"Buy milk",1)),(3,(False,"Jog",0))]}),ProperTasks (Tasks {getTasks = fromList [(2,(True,"Walk dog",0)),(3,(False,"Jog",0))]}))
 
@@ -310,10 +326,10 @@ dOGc :: DT OnGoing
 dOGc = PartialTasks $ PTasks (Tasks IM.empty) d (COnGoing c) POnGoing
   where
     d = [1]
-    c = Tasks $ IM.fromList [(3, (True, "Stretch", 0))]
+    c = Tasks $ IM.fromList [(3, (True, "Jog", 0))]
 
 -- >>> put lTasks originalTasks (dOGc, least)
--- Ok (Tasks {getTasks = fromList [(2,(True,"Walk dog",0)),(3,(True,"Stretch",0))]})
+-- Ok (Tasks {getTasks = fromList [(2,(True,"Walk dog",0)),(3,(True,"Jog",0))]})
 
 -- A conflicting update
 dDTpConflict :: DT DueToday

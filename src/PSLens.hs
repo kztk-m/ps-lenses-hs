@@ -104,6 +104,9 @@ eraseL = PSLens (const $ pure ()) (\s _ -> pure s)
 eraseUnspecL :: (LowerBounded a) => PSLens a ()
 eraseUnspecL = PSLens (const $ pure ()) (const $ const $ pure least)
 
+eraseTemplateL :: (Templatable a) => PSLens a ()
+eraseTemplateL = PSLens (const $ pure ()) (const . pure . template)
+
 constL :: (LowerBounded s, CheckIdentical a) => a -> PSLens s a
 constL a =
   PSLens
@@ -121,11 +124,16 @@ dup = PSLens (\a -> pure (a, a)) (\_ ~(a1, a2) -> lub a1 a2)
 dupW :: WitLub a -> PSLens a (a, a)
 dupW w = PSLens (\a -> pure (a, a)) (\_ ~(a1, a2) -> lubWith w a1 a2)
 
-{- | The dual of the duplication lens. This is not useful as `dup`. The fact
-that put-then-get is enough for synchronization means that we are not able to
-source-to-source update propagation---if both are allowed, we are not able to
-bound the number of round-trips.
+{-
+Several lens primitives and combinators.
+
+Most of them are NOT mentioned in our ESOP 2026 paper except unTagS.
 -}
+
+-- | The dual of the duplication lens. This is not useful as `dup`. The fact
+-- that put-then-get is enough for synchronization means that we are not able to
+-- source-to-source update propagation---if both are allowed, we are not able to
+-- bound the number of round-trips.
 merge :: (Glb a) => PSLens (a, a) a
 merge = PSLens (\ ~(a1, a2) -> pure $ glb a1 a2) (\_ a -> pure (a, a))
 
