@@ -6,7 +6,7 @@ This code accompanies our ESOP 2026 paper "Lenses for Partially-Specified States
 
 Ensure you have the following installed:
 
-* GHC (tested 9.6.5, 9.6.6, 9.6.7, and 9.14.1)
+* GHC (tested 9.6.5, 9.6.6, 9.6.7, and 9.14.1; thus 9.8, 9.10 and 9.12 would also work)
 * cabal (version 3.0 or later)
 
 These can be installed using [ghcup](https://www.haskell.org/ghcup/) or your distribution's package manager.
@@ -34,7 +34,7 @@ ghci> put (constL 42) (Some 3) 41
 Err ["constL: non identical update on a constant."]
 ```
 
-More examples are available in `src/PSLens/Examples/Tasks.hs`, which implements the task list example discussed Sections 2 and 4 in the paper. The following is how to reproduce the execution results discussed in Section 2.
+More examples are available in `src/PSLens/Examples/Tasks.hs`, which implements the task list example discussed in Sections 2 and 4 of the paper. The following demonstrates how to reproduce the execution results discussed in Section 2.
 
 ```haskell
 ghci> :load PSLens.Examples.Tasks
@@ -98,8 +98,8 @@ The project files are structured as follows:
 * `src/Err.hs` A monad for error reporting.
 * `src/PSLens.hs` The main definition of partial-state lenses and their combinators, including those not mentioned in our paper.
 * `src/PSLensTH.hs` Template Haskell to simplify pair manipulation (not mentioned in the paper).
-* `src/PSLens/Examples/Tasks.hs` Tasks list examples (Sections 2 and 4)
+* `src/PSLens/Examples/Tasks.hs` Task list examples (Sections 2 and 4)
 
 ## Notable Differences from the Paper
 
-The code `src/PSLens/Examples/Tasks.hs` only implemented the elaborated version discussed in Section 4.5. One can mimic the behavior of the non-elaborated version by setting completion/postponing requests empty. For simplicity, we simply use `Int` for due dates.
+The code `src/PSLens/Examples/Tasks.hs` only implements the elaborated version discussed in Section 4.5. One can mimic the behavior of the non-elaborated version by setting completion/postponing requests to empty. For simplicity, we use `Int` for due dates.
