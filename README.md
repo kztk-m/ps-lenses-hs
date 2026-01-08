@@ -37,7 +37,7 @@ Err ["constL: non identical update on a constant."]
 More examples are available in `src/PSLens/Examples/Tasks.hs`, which implements the task list example discussed in Sections 2 and 4 of the paper. The following demonstrates how to reproduce the execution results discussed in Section 2.
 
 ```haskell
-ghci> :load PSLens.Examples.Tasks
+ghci> import PSLens.Examples.Tasks
 ...
 ghci> import Err
 ...
