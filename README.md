@@ -26,11 +26,11 @@ Then, load the relevant files. No explicit build is required for this command. F
 ```haskell
 ghci> :load PSLens
 ...
-ghci> get (constL 42) (Some 3) :: Err Int 
+ghci> get (constL 42) (Some 3 :: M Int) :: Err Int 
 Ok 42 
-ghci> put (constL 42) (Some 3) 42 
+ghci> put (constL 42) (Some 3 :: M Int) (42 :: Int) 
 Ok (NoneWith [])
-ghci> put (constL 42) (Some 3) 41 
+ghci> put (constL 42) (Some 3 :: M Int) (41 :: Int) 
 Err ["constL: non identical update on a constant."]
 ```
 
