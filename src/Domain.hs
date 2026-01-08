@@ -124,6 +124,14 @@ instance (CheckIdentical a, CheckIdentical b) => CheckIdentical (a, b)
 instance (CheckIdentical a, CheckIdentical b, CheckIdentical c) => CheckIdentical (a, b, c)
 instance (CheckIdentical a, CheckIdentical b) => CheckIdentical (Either a b)
 
+instance (Eq a, Discrete a) => CheckIdentical (EqDisc a) where
+  identicalAt (EqDisc a) (EqDisc b) = a == b
+
+deriving via EqDisc Int instance CheckIdentical Int
+deriving via EqDisc Double instance CheckIdentical Double
+deriving via EqDisc Bool instance CheckIdentical Bool
+deriving via EqDisc Char instance CheckIdentical Char
+
 -- | Lowerbounded i-posets (ordering is implicit in Haskell implementation)
 class LowerBounded a where
   least :: a
